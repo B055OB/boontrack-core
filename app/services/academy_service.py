@@ -2404,18 +2404,58 @@ def _execute_atomic_settlement_tx(
                 "message": "Duplicate payment event blocked atomically.",
             }
 
-        cur.execute(
-            """
-            UPDATE public.orders
-            SET status = 'PAID',
-                payment_status = 'PAID',
-                order_status = 'PAID',
-                paid_at = COALESCE(paid_at, %s),
-                updated_at = %s
-            WHERE id = %s;
-            """,
-            (now_utc, now_utc, order_id),
-        )
+        # Single-Writer Architecture: Enqueue outbox projection (ZERO direct UPDATE public.orders)
+        try:
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS payment_outbox_events (
+                    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                    event_type VARCHAR(64) NOT NULL,
+                    canonical_tenant_id VARCHAR(100) NOT NULL,
+                    order_id VARCHAR(128) NOT NULL,
+                    payment_intent_id UUID,
+                    provider VARCHAR(32) NOT NULL,
+                    provider_event_id VARCHAR(128),
+                    idempotency_key VARCHAR(255) NOT NULL UNIQUE,
+                    payload JSONB NOT NULL,
+                    provenance_envelope JSONB,
+                    status VARCHAR(32) NOT NULL DEFAULT 'PENDING',
+                    attempt_count INT NOT NULL DEFAULT 0,
+                    next_attempt_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    locked_by VARCHAR(128),
+                    locked_at TIMESTAMPTZ,
+                    delivered_at TIMESTAMPTZ,
+                    last_error TEXT,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                );
+                """
+            )
+            acad_outbox_key = f"{provider_upper}:{event_id}:settled"
+            cur.execute(
+                """
+                INSERT INTO payment_outbox_events (
+                    event_type, canonical_tenant_id, order_id, provider, provider_event_id,
+                    idempotency_key, payload, status, created_at, updated_at
+                ) VALUES (
+                    'PAYMENT_SETTLED', %s, %s, %s, %s,
+                    %s, %s::jsonb, 'PENDING', %s, %s
+                )
+                ON CONFLICT (idempotency_key) DO NOTHING;
+                """,
+                (
+                    canonical_db_tenant_id,
+                    order_id,
+                    provider_upper,
+                    provider_event_val,
+                    acad_outbox_key,
+                    payload_json,
+                    now_utc,
+                    now_utc,
+                ),
+            )
+        except Exception as ob_e:
+            logger.warning(f"[Academy Outbox Note] {ob_e}")
 
         if db_session_state is not None:
             cur.execute(

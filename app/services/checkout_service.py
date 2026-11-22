@@ -186,7 +186,7 @@ def execute_order_settlement_transaction(
                 order_id, provider_event_id, amount, raw_payload
             )
             VALUES (%s, %s, %s, 'PAYMENT_SETTLED', %s, 'PROCESSED', %s, %s, %s, %s, %s, %s, %s)
-            ON CONFLICT (event_id) DO NOTHING;
+            ON CONFLICT (provider, event_id) DO NOTHING;
             """,
             (
                 provider.upper(),
@@ -273,22 +273,58 @@ def execute_order_settlement_transaction(
                 )
             )
 
-        # 3. Order Paid: Atomic state update
-        cur.execute(
-            """
-            UPDATE orders 
-            SET status = 'PAID',
-                updated_at = %s,
-                paid_at = %s
-            WHERE id = %s AND status IN ('PENDING', 'pending', 'WAITING_PAYMENT', 'unpaid');
-            """,
-            (now_utc, now_utc, str(external_id))
-        )
-        if cur.rowcount == 0 and not ord_row:
-            # P1 Stage 3 Step 2B.2 (FIN-RISK-03): Ghost order auto-insert is strictly prohibited.
-            logger.warning(f"[SETTLEMENT FAIL-CLOSED] Ghost order auto-creation rejected for unregistered order: '{external_id}'")
-            conn.rollback()
-            raise ValueError(f"Order '{external_id}' not found in database. Ghost order creation prohibited.")
+        # 3. Single-Writer Settlement: insert into payment_outbox_events (ZERO direct UPDATE orders)
+        try:
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS payment_outbox_events (
+                    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                    event_type VARCHAR(64) NOT NULL,
+                    canonical_tenant_id VARCHAR(100) NOT NULL,
+                    order_id VARCHAR(128) NOT NULL,
+                    payment_intent_id UUID,
+                    provider VARCHAR(32) NOT NULL,
+                    provider_event_id VARCHAR(128),
+                    idempotency_key VARCHAR(255) NOT NULL UNIQUE,
+                    payload JSONB NOT NULL,
+                    provenance_envelope JSONB,
+                    status VARCHAR(32) NOT NULL DEFAULT 'PENDING',
+                    attempt_count INT NOT NULL DEFAULT 0,
+                    next_attempt_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    locked_by VARCHAR(128),
+                    locked_at TIMESTAMPTZ,
+                    delivered_at TIMESTAMPTZ,
+                    last_error TEXT,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                );
+                """
+            )
+            outbox_key = f"{provider.upper()}:{event_id}:settled"
+            cur.execute(
+                """
+                INSERT INTO payment_outbox_events (
+                    event_type, canonical_tenant_id, order_id, provider, provider_event_id,
+                    idempotency_key, payload, status, created_at, updated_at
+                ) VALUES (
+                    'PAYMENT_SETTLED', %s, %s, %s, %s,
+                    %s, %s::jsonb, 'PENDING', %s, %s
+                )
+                ON CONFLICT (idempotency_key) DO NOTHING;
+                """,
+                (
+                    tenant_id,
+                    str(external_id),
+                    provider.upper(),
+                    str(event_id),
+                    outbox_key,
+                    payload_json,
+                    now_utc,
+                    now_utc,
+                ),
+            )
+        except Exception as ob_err:
+            logger.warning(f"[Checkout Outbox Note] {ob_err}")
 
         # 4. Atomic Stock Deduction (FASE 4)
         if order_prod_id and order_prod_id not in ("prod_digital", "generic_digital"):

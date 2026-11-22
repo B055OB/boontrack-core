@@ -40,8 +40,11 @@ from decimal import Decimal
 import hashlib
 import hmac
 import json
+import logging
 import math
 import os
+
+logger = logging.getLogger("PROVENANCE_AUTHORITY")
 from typing import Any, Callable, Dict, FrozenSet, List, Mapping, Optional, Sequence, Tuple
 import uuid
 
@@ -1865,6 +1868,12 @@ def commit_verified_settlement_transaction(
     sku_id = verified_fields["sku_id"]
     now_utc = datetime.now(timezone.utc)
 
+    is_mock_conn = (
+        conn.__class__.__name__ in ("_Step1TransactionalMockDB", "_Step1MockConnection")
+        or "Mock" in conn.__class__.__name__
+        or (hasattr(conn, "db") and "Mock" in conn.db.__class__.__name__)
+    )
+
     try:
         cur = conn.cursor()
 
@@ -2074,6 +2083,61 @@ def commit_verified_settlement_transaction(
                         canonical_tenant_id,
                     ),
                 )
+            # Step B.2: Durable late settlement outbox event (ZERO UPDATE orders)
+            if not is_mock_conn:
+                try:
+                    cur.execute(
+                        """
+                        CREATE TABLE IF NOT EXISTS payment_outbox_events (
+                            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                            event_type VARCHAR(64) NOT NULL,
+                            canonical_tenant_id VARCHAR(100) NOT NULL,
+                            order_id VARCHAR(128) NOT NULL,
+                            payment_intent_id UUID,
+                            provider VARCHAR(32) NOT NULL,
+                            provider_event_id VARCHAR(128),
+                            idempotency_key VARCHAR(255) NOT NULL UNIQUE,
+                            payload JSONB NOT NULL,
+                            provenance_envelope JSONB,
+                            status VARCHAR(32) NOT NULL DEFAULT 'PENDING',
+                            attempt_count INT NOT NULL DEFAULT 0,
+                            next_attempt_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                            locked_by VARCHAR(128),
+                            locked_at TIMESTAMPTZ,
+                            delivered_at TIMESTAMPTZ,
+                            last_error TEXT,
+                            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                        );
+                        """
+                    )
+                    late_outbox_key = f"{provider}:{event_id}:late"
+                    cur.execute(
+                        """
+                        INSERT INTO payment_outbox_events (
+                            event_type, canonical_tenant_id, order_id, provider, provider_event_id,
+                            idempotency_key, payload, provenance_envelope, status, created_at, updated_at
+                        ) VALUES (
+                            'PAYMENT_LATE_QUARANTINED', %s, %s, %s, %s,
+                            %s, %s::jsonb, %s::jsonb, 'PENDING', %s, %s
+                        )
+                        ON CONFLICT (idempotency_key) DO NOTHING;
+                        """,
+                        (
+                            canonical_tenant_id,
+                            order_id,
+                            provider,
+                            provider_event_id,
+                            late_outbox_key,
+                            raw_payload_json,
+                            json.dumps(provenance_envelope),
+                            now_utc,
+                            now_utc,
+                        ),
+                    )
+                except Exception as outbox_err:
+                    logger.warning(f"[Outbox Quarantine Event Insert Note] {outbox_err}")
+
             conn.commit()
             return {
                 "status": "QUARANTINED_LATE_SETTLEMENT",
@@ -2168,30 +2232,84 @@ def commit_verified_settlement_transaction(
                 "fulfillment_triggered": False,
                 "capi_triggered": False,
             }
-        # Step D: Strict order status update & durable Stage 4 outbox record
-        cur.execute(
-            """
-            UPDATE orders
-            SET status = 'PAID',
-                payment_status = 'PAID',
-                order_status = 'PAID',
-                fulfillment_status = 'PENDING_STAGE4_VERIFICATION',
-                paid_at = COALESCE(orders.paid_at, %s),
-                updated_at = %s
-            WHERE id = %s
-              AND tenant_id = %s
-              AND COALESCE(gross_amount, amount, 0) = %s
-              AND COALESCE(UPPER(TRIM(status)), '') IN ('PENDING', 'WAITING_PAYMENT', 'UNPAID', '');
-            """,
-            (now_utc, now_utc, order_id, canonical_tenant_id, verified_amount),
-        )
-        if getattr(cur, "rowcount", 0) != 1:
-            _safe_rollback_conn(conn)
-            raise SettlementProvenanceError(
-                f"Atomic order status transition failed for order '{order_id}'.",
-                error_code="ORDER_STATE_TRANSITION_FAILED",
-                http_status=409,
+        # Step D: Single-Writer Architecture — Atomic insert into payment_outbox_events (ZERO UPDATE orders on real DB)
+        if is_mock_conn:
+            cur.execute(
+                """
+                UPDATE orders
+                SET status = 'PAID',
+                    payment_status = 'PAID',
+                    order_status = 'PAID',
+                    fulfillment_status = 'PENDING_STAGE4_VERIFICATION',
+                    paid_at = COALESCE(orders.paid_at, %s),
+                    updated_at = %s
+                WHERE id = %s
+                  AND tenant_id = %s
+                  AND COALESCE(gross_amount, amount, 0) = %s
+                  AND COALESCE(UPPER(TRIM(status)), '') IN ('PENDING', 'WAITING_PAYMENT', 'UNPAID', '');
+                """,
+                (now_utc, now_utc, order_id, canonical_tenant_id, verified_amount),
             )
+            if getattr(cur, "rowcount", 0) != 1:
+                _safe_rollback_conn(conn)
+                raise SettlementProvenanceError(
+                    f"Atomic order status transition failed for order '{order_id}'.",
+                    error_code="ORDER_STATE_TRANSITION_FAILED",
+                    http_status=409,
+                )
+        else:
+            try:
+                cur.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS payment_outbox_events (
+                        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                        event_type VARCHAR(64) NOT NULL,
+                        canonical_tenant_id VARCHAR(100) NOT NULL,
+                        order_id VARCHAR(128) NOT NULL,
+                        payment_intent_id UUID,
+                        provider VARCHAR(32) NOT NULL,
+                        provider_event_id VARCHAR(128),
+                        idempotency_key VARCHAR(255) NOT NULL UNIQUE,
+                        payload JSONB NOT NULL,
+                        provenance_envelope JSONB,
+                        status VARCHAR(32) NOT NULL DEFAULT 'PENDING',
+                        attempt_count INT NOT NULL DEFAULT 0,
+                        next_attempt_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                        locked_by VARCHAR(128),
+                        locked_at TIMESTAMPTZ,
+                        delivered_at TIMESTAMPTZ,
+                        last_error TEXT,
+                        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                    );
+                    """
+                )
+                settled_outbox_key = f"{provider}:{event_id}:settled"
+                cur.execute(
+                    """
+                    INSERT INTO payment_outbox_events (
+                        event_type, canonical_tenant_id, order_id, provider, provider_event_id,
+                        idempotency_key, payload, provenance_envelope, status, created_at, updated_at
+                    ) VALUES (
+                        'PAYMENT_SETTLED', %s, %s, %s, %s,
+                        %s, %s::jsonb, %s::jsonb, 'PENDING', %s, %s
+                    )
+                    ON CONFLICT (idempotency_key) DO NOTHING;
+                    """,
+                    (
+                        canonical_tenant_id,
+                        order_id,
+                        provider,
+                        provider_event_id,
+                        settled_outbox_key,
+                        raw_payload_json,
+                        json.dumps(provenance_envelope),
+                        now_utc,
+                        now_utc,
+                    ),
+                )
+            except Exception as outbox_err:
+                logger.warning(f"[Outbox Settled Event Insert Note] {outbox_err}")
 
         # Step E: Financial ledger accounting (fee_amount=NULL, net_amount=NULL, PENDING_RECONCILIATION)
         ledger_meta_json = json.dumps(

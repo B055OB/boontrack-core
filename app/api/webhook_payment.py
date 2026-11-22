@@ -1,50 +1,52 @@
 import os
 import asyncio
 import logging
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 from fastapi import APIRouter, Request, BackgroundTasks
 from aiohttp import web
-from app.services.payment_orchestrator import PaymentOrchestrator
-from app.services.whatsapp_delivery_service import WhatsAppDeliveryService
 
-# Supabase Client Initialization (Fail-Closed & Principle of Least Privilege)
-from supabase import create_client, Client
+logger = logging.getLogger("boontrack.webhook")
 
-supabase_url = os.getenv("SUPABASE_URL", "").strip()
-supabase_anon_key = (os.getenv("SUPABASE_ANON_KEY") or os.getenv("SUPABASE_KEY", "")).strip()
-
-if not supabase_url or not supabase_anon_key:
-    raise RuntimeError(
-        "[SECURITY FAIL-CLOSED] Mandatory Supabase public configuration is missing in webhook_payment. "
-        "SUPABASE_URL and SUPABASE_ANON_KEY (or SUPABASE_KEY) must be provided in the environment."
-    )
-
-from app.core.security.test_isolation_guard import assert_disposable_supabase_url
-
-assert_disposable_supabase_url(supabase_url, allow_empty=False)
-
-try:
-    # Standard restricted client bound by RLS
-    supabase: Client = create_client(supabase_url, supabase_anon_key)
-except Exception as e:
-    raise RuntimeError(f"[SECURITY FAIL-CLOSED] Failed to initialize Supabase client in webhook_payment: {e}") from e
+_supabase_client = None
 
 
-def get_admin_supabase_client() -> Client:
+def get_supabase_client():
+    """Lazy initialization of standard restricted Supabase client."""
+    global _supabase_client
+    if _supabase_client is not None:
+        return _supabase_client
+    supabase_url = os.getenv("SUPABASE_URL", "").strip()
+    supabase_anon_key = (os.getenv("SUPABASE_ANON_KEY") or os.getenv("SUPABASE_KEY", "")).strip()
+    if not supabase_url or not supabase_anon_key:
+        raise RuntimeError(
+            "[SECURITY FAIL-CLOSED] Mandatory Supabase public configuration is missing in webhook_payment. "
+            "SUPABASE_URL and SUPABASE_ANON_KEY (or SUPABASE_KEY) must be provided in the environment."
+        )
+    from app.core.security.test_isolation_guard import assert_disposable_supabase_url
+    assert_disposable_supabase_url(supabase_url, allow_empty=False)
+    from supabase import create_client
+    _supabase_client = create_client(supabase_url, supabase_anon_key)
+    return _supabase_client
+
+
+def get_admin_supabase_client():
     """Isolated administrative Supabase client using SUPABASE_SERVICE_ROLE_KEY.
     STRICT PRIVILEGE SEPARATION:
     Must only be called from verified administrative execution paths.
     """
+    supabase_url = os.getenv("SUPABASE_URL", "").strip()
     admin_key = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "").strip()
     if not admin_key or not supabase_url:
         raise RuntimeError(
             "[SECURITY FAIL-CLOSED] SUPABASE_SERVICE_ROLE_KEY is required for administrative operations but not configured."
         )
+    from app.core.security.test_isolation_guard import assert_disposable_supabase_url
     assert_disposable_supabase_url(supabase_url, allow_empty=False)
+    from supabase import create_client
     return create_client(supabase_url, admin_key)
 
 
-def get_verified_webhook_supabase_client(headers: Dict[str, str]) -> Client:
+def get_verified_webhook_supabase_client(headers: Dict[str, str]):
     """Returns administrative client ONLY if inbound request contains a valid x-callback-token.
     Enforces that unverified callers cannot acquire administrative service_role access.
     """
@@ -56,88 +58,17 @@ def get_verified_webhook_supabase_client(headers: Dict[str, str]) -> Client:
         )
     return get_admin_supabase_client()
 
-logger = logging.getLogger("boontrack.webhook")
-wa_service = WhatsAppDeliveryService()
 
 # ---------------------------------------------------------
-# BACKGROUND WORKER DISPATCHER
-# ---------------------------------------------------------
-async def background_delivery_and_notify(job_payload: Dict[str, Any]):
-    """
-    Background worker untuk pengiriman WA delivery otomatis dan log status
-    """
-    order_id = job_payload.get("order_id")
-    tenant_slug = job_payload.get("tenant_slug")
-    logger.info(f"[Worker] Processing digital delivery for Order: {order_id} ({tenant_slug})")
-    
-    # Eksekusi pengiriman pesan WhatsApp via Cloud API
-    await wa_service.send_digital_product_delivery(job_payload)
-
-# ---------------------------------------------------------
-# FASTAPI ROUTER
+# FASTAPI ROUTER (Decommissioned — Zero Routes)
+# All official payment webhooks route exclusively to app/routes/xendit.py
 # ---------------------------------------------------------
 router = APIRouter(prefix="/webhook", tags=["Payments"])
 
-@router.post("/xendit")
-async def xendit_payment_webhook(request: Request, background_tasks: BackgroundTasks):
-    from fastapi import HTTPException
-    from app.routes.xendit import process_xendit_webhook_core
-    headers_dict = dict(request.headers)
-
-    # STRICT FAIL-CLOSED AUTHENTICATION & PRIVILEGE GUARD BEFORE MUTATION
-    try:
-        admin_sb = get_verified_webhook_supabase_client(headers_dict)
-        logger.info("[Webhook FastAPI] Admin Supabase client authorized for verified webhook settlement.")
-    except PermissionError as auth_err:
-        logger.warning(f"[Webhook FastAPI] Unauthorized webhook rejected fail-closed: {auth_err}")
-        raise HTTPException(status_code=403, detail=str(auth_err))
-
-    try:
-        payload = await request.json()
-    except Exception as e:
-        logger.error(f"[Webhook FastAPI] Failed to parse JSON: {str(e)}")
-        raise HTTPException(status_code=400, detail="Invalid JSON payload")
-
-    result = await process_xendit_webhook_core(payload, headers_dict)
-    http_code = result.get("http_status", 200)
-    response_body = result.get("response", {})
-    if http_code != 200:
-        raise HTTPException(status_code=http_code, detail=response_body.get("error", "Webhook processing failed"))
-
-    return response_body
 
 # ---------------------------------------------------------
-# AIOHTTP HANDLER & REGISTRATION (Runtime Railway)
+# AIOHTTP REGISTRATION (Decommissioned — Zero Duplicate Routes)
 # ---------------------------------------------------------
-async def aiohttp_xendit_webhook_handler(request: web.Request) -> web.Response:
-    from app.routes.xendit import process_xendit_webhook_core
-    headers_dict = {k.lower(): v for k, v in request.headers.items()}
-
-    # STRICT FAIL-CLOSED AUTHENTICATION & PRIVILEGE GUARD BEFORE MUTATION
-    try:
-        admin_sb = get_verified_webhook_supabase_client(headers_dict)
-        logger.info("[Webhook aiohttp] Admin Supabase client authorized for verified webhook settlement.")
-    except PermissionError as auth_err:
-        logger.warning(f"[Webhook aiohttp] Unauthorized webhook rejected fail-closed: {auth_err}")
-        return web.json_response({"error": str(auth_err)}, status=403)
-
-    try:
-        payload = await request.json()
-    except Exception as e:
-        logger.error(f"[Webhook aiohttp] Failed to parse JSON: {str(e)}")
-        return web.json_response({"error": "Invalid JSON payload"}, status=400)
-
-    result = await process_xendit_webhook_core(payload, headers_dict)
-    http_code = result.get("http_status", 200)
-    response_body = result.get("response", {})
-    if http_code != 200:
-        return web.json_response(response_body, status=http_code)
-
-    return web.json_response(response_body, status=200)
-
 def register_webhook_payment_routes(aiohttp_app: web.Application):
-    """Mendaftarkan route langsung ke engine aiohttp"""
-    existing = {getattr(r, "path", "") for r in aiohttp_app.router.routes()}
-    if '/webhook/xendit' not in existing:
-        aiohttp_app.router.add_post('/webhook/xendit', aiohttp_xendit_webhook_handler)
-    logger.info("[BOOT] Webhook Xendit route registered to aiohttp engine at /webhook/xendit")
+    """Decommissioned duplicate webhook routes — official routes registered via register_xendit_routes."""
+    logger.info("[BOOT] webhook_payment duplicate routes decommissioned; Xendit routes bound in register_xendit_routes.")
