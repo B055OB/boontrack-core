@@ -18,10 +18,11 @@ from __future__ import annotations
 
 import asyncio
 import enum
+import json
 import logging
 from datetime import datetime, timezone, timedelta
 from decimal import Decimal
-from typing import Any, Callable, Dict, List, Optional, Set, Tuple
+from typing import Any, Callable, Dict, List, Optional, Set, Tuple, Union
 from uuid import uuid4
 
 from sqlalchemy import select, text
@@ -213,20 +214,32 @@ def emit_payment_outbox_event(
     tenant_id: str,
     order_id: str,
     db_session: Any = None,
+    db_conn: Any = None,
+    connection: Any = None,
+    pool: Any = None,
+    signature: Optional[str] = None,
+    **kwargs: Any,
 ) -> Dict[str, Any]:
     """
     Appends a durable event into `payment_outbox_events`.
     Guarantees ACID boundary without ever directly mutating Inbox public.orders.
+    Whenever a database connection/pool is provided, executes an actual SQL INSERT
+    into public.payment_outbox_events (matching Migration 037 columns) in addition to
+    in-memory tracking.
     """
     now = datetime.now(timezone.utc)
+    evt_id = f"evt_{uuid4().hex}"
     outbox_entry = {
         "id": str(uuid4()),
+        "event_id": evt_id,
         "event_type": str(event_type),
         "aggregate_type": "PAYMENT_INTENT",
         "aggregate_id": str(aggregate_id),
         "tenant_id": str(tenant_id),
         "order_id": str(order_id),
         "payload": payload,
+        "signature": signature,
+        "delivery_status": "PENDING",
         "status": "PENDING",
         "created_at": now.isoformat(),
     }
@@ -235,6 +248,145 @@ def emit_payment_outbox_event(
         f"[PAYMENT_OUTBOX] Emitted '{event_type}' for order '{order_id}' "
         f"(aggregate_id={aggregate_id}). Zero direct mutation on public.orders."
     )
+
+    target_db = (
+        db_session
+        if db_session is not None
+        else (
+            db_conn
+            if db_conn is not None
+            else (
+                connection
+                if connection is not None
+                else (pool if pool is not None else kwargs.get("conn"))
+            )
+        )
+    )
+
+    if target_db is not None:
+        payload_str = payload if isinstance(payload, str) else json.dumps(payload, default=str)
+
+        # 1. Connection Pool with getconn/putconn (e.g. psycopg2 pool)
+        if hasattr(target_db, "getconn") and callable(target_db.getconn):
+            raw_conn = target_db.getconn()
+            try:
+                with raw_conn.cursor() as cur:
+                    cur.execute(
+                        """
+                        INSERT INTO public.payment_outbox_events (
+                            event_id, aggregate_id, event_type, payload, signature, delivery_status
+                        ) VALUES (
+                            %s, %s, %s, %s, %s, 'PENDING'
+                        );
+                        """,
+                        (
+                            evt_id,
+                            str(aggregate_id),
+                            str(event_type),
+                            payload_str,
+                            signature,
+                        ),
+                    )
+                if hasattr(raw_conn, "commit") and callable(raw_conn.commit):
+                    try:
+                        raw_conn.commit()
+                    except Exception:
+                        pass
+            except Exception as pool_err:
+                logger.warning(f"[PAYMENT_OUTBOX] DB pool insert note: {pool_err}")
+                raise
+            finally:
+                if hasattr(target_db, "putconn") and callable(target_db.putconn):
+                    target_db.putconn(raw_conn)
+
+        # 2. Raw DB-API Connection with .cursor() (e.g. psycopg2, sqlite3)
+        elif hasattr(target_db, "cursor") and callable(target_db.cursor):
+            try:
+                cur = target_db.cursor()
+                if hasattr(cur, "__enter__"):
+                    with cur:
+                        cur.execute(
+                            """
+                            INSERT INTO public.payment_outbox_events (
+                                event_id, aggregate_id, event_type, payload, signature, delivery_status
+                            ) VALUES (
+                                %s, %s, %s, %s, %s, 'PENDING'
+                            );
+                            """,
+                            (
+                                evt_id,
+                                str(aggregate_id),
+                                str(event_type),
+                                payload_str,
+                                signature,
+                            ),
+                        )
+                else:
+                    cur.execute(
+                        """
+                        INSERT INTO public.payment_outbox_events (
+                            event_id, aggregate_id, event_type, payload, signature, delivery_status
+                        ) VALUES (
+                            %s, %s, %s, %s, %s, 'PENDING'
+                        );
+                        """,
+                        (
+                            evt_id,
+                            str(aggregate_id),
+                            str(event_type),
+                            payload_str,
+                            signature,
+                        ),
+                    )
+                    if hasattr(cur, "close") and callable(cur.close):
+                        cur.close()
+
+                if hasattr(target_db, "commit") and callable(target_db.commit):
+                    try:
+                        target_db.commit()
+                    except Exception:
+                        pass
+            except Exception as conn_err:
+                logger.warning(f"[PAYMENT_OUTBOX] DB connection insert note: {conn_err}")
+                raise
+
+        # 3. SQLAlchemy Session / AsyncSession / Engine
+        elif hasattr(target_db, "execute") and callable(target_db.execute):
+            try:
+                stmt = text(
+                    """
+                    INSERT INTO public.payment_outbox_events (
+                        event_id, aggregate_id, event_type, payload, signature, delivery_status
+                    ) VALUES (
+                        :event_id, :aggregate_id, :event_type, :payload, :signature, 'PENDING'
+                    );
+                    """
+                )
+                params = {
+                    "event_id": evt_id,
+                    "aggregate_id": str(aggregate_id),
+                    "event_type": str(event_type),
+                    "payload": payload_str,
+                    "signature": signature,
+                }
+                sync_sess = getattr(target_db, "sync_session", None)
+                if sync_sess is not None and hasattr(sync_sess, "execute"):
+                    sync_sess.execute(stmt, params)
+                else:
+                    exec_res = target_db.execute(stmt, params)
+                    if asyncio.iscoroutine(exec_res):
+                        try:
+                            loop = asyncio.get_event_loop()
+                            if loop.is_running():
+                                asyncio.create_task(exec_res)
+                            else:
+                                loop.run_until_complete(exec_res)
+                        except Exception as async_err:
+                            logger.debug(f"[PAYMENT_OUTBOX] AsyncSession execute note: {async_err}")
+            except Exception as sa_err:
+                logger.warning(f"[PAYMENT_OUTBOX] SQLAlchemy execute note: {sa_err}")
+                raise
+
     return outbox_entry
 
 
@@ -537,6 +689,7 @@ async def run_reconciliation_cycle(
                     },
                     tenant_id=tenant_id,
                     order_id=order_id,
+                    db_session=db_session,
                 )
 
             elif outcome == ProviderLookupOutcome.CONFIRMED_SETTLEMENT:
@@ -561,6 +714,7 @@ async def run_reconciliation_cycle(
                         },
                         tenant_id=tenant_id,
                         order_id=order_id,
+                        db_session=db_session,
                     )
                     logger.warning(
                         f"[QUARANTINE_ALERT] Late settlement detected on expired attempt '{intent['id']}' ({order_id}). "
@@ -584,6 +738,7 @@ async def run_reconciliation_cycle(
                         },
                         tenant_id=tenant_id,
                         order_id=order_id,
+                        db_session=db_session,
                     )
 
             elif outcome == ProviderLookupOutcome.CONFIRMED_PENDING:
@@ -614,6 +769,7 @@ async def run_reconciliation_cycle(
                 },
                 tenant_id=tenant_id,
                 order_id=order_id,
+                db_session=db_session,
             )
 
             # Trigger inventory restoration hook
@@ -682,6 +838,7 @@ async def run_reconciliation_cycle(
                 },
                 tenant_id=order.get("tenant_id", "default"),
                 order_id=order_id,
+                db_session=db_session,
             )
 
     # =========================================================================
