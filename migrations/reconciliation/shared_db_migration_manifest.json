@@ -27,138 +27,473 @@
       "phase": "PHASE_0_DISPOSABLE_BOOTSTRAP",
       "description": "Disposable PG 17 clean-replay base catalog bootstrap (C-05/C-06)",
       "entries": [
-        {"repo": "reconciliation", "file": "000_disposable_pg17_base_catalog_bootstrap.sql"}
+        {
+          "repo": "reconciliation",
+          "file": "000_disposable_pg17_base_catalog_bootstrap.sql"
+        }
       ]
     },
     {
       "phase": "PHASE_1_CORE_BASE_SCHEMA",
       "description": "Core base operational tables and schema additions prior to RLS/FK hardening",
       "entries": [
-        {"repo": "core", "file": "v1.0_conversation_os_tables.sql"},
-        {"repo": "core", "file": "v1.1_assets_table.sql"},
-        {"repo": "core", "file": "002_create_document_jobs.sql"},
-        {"repo": "core", "file": "003_update_document_jobs_compliance.sql"},
-        {"repo": "core", "file": "004_create_gym_iot_tables.sql"},
-        {"repo": "core", "file": "005_create_core_payment_tables.sql"},
-        {"repo": "core", "file": "006_create_control_plane_tables.sql"},
-        {"repo": "core", "file": "007_add_affiliate_ref_and_tenant_payouts.sql"},
-        {"repo": "core", "file": "008_add_onboarding_mode_to_tenants.sql"},
-        {"repo": "core", "file": "008_whitelist_partners_bank_and_payouts.sql"},
-        {"repo": "core", "file": "009_create_campaign_attributions_and_seed_onlineboost.sql"},
-        {"repo": "core", "file": "010_local_service_v1_booking_state_engine.sql"},
-        {"repo": "core", "file": "011_booking_reminders_auto_scheduler.sql"},
-        {"repo": "core", "file": "012_reader_notifications_hybrid_callback.sql"},
-        {"repo": "core", "file": "013_add_screening_and_bank_details_to_affiliates.sql"},
-        {"repo": "core", "file": "014_create_control_plane_tenant_prospects.sql"},
-        {"repo": "core", "file": "015_create_cs_agents_and_update_conversations.sql"},
-        {"repo": "core", "file": "016_create_whatsapp_connections.sql"},
-        {"repo": "core", "file": "017_update_cs_agents_team_access.sql"},
-        {"repo": "core", "file": "018_add_activation_unique_constraints.sql"},
-        {"repo": "core", "file": "019_add_is_connected_to_whatsapp_connections.sql"},
-        {"repo": "core", "file": "020_create_waba_conversations.sql"},
-        {"repo": "core", "file": "021_create_outbound_messages.sql"},
-        {"repo": "core", "file": "022_create_inbound_webhook_events.sql"},
-        {"repo": "core", "file": "023_create_tenant_waba_configs.sql"},
-        {"repo": "core", "file": "024_create_payment_orders.sql"},
-        {"repo": "core", "file": "025_add_outbound_channel_lock_and_idempotency.sql"},
-        {"repo": "core", "file": "026_add_provider_to_conversations.sql"},
-        {"repo": "core", "file": "026_crm_ssot_and_orders_contact_id.sql"},
-        {"repo": "core", "file": "20260925_create_booking_slots_and_bot_profiles.sql"}
+        {
+          "repo": "core",
+          "file": "v1.0_conversation_os_tables.sql"
+        },
+        {
+          "repo": "core",
+          "file": "v1.1_assets_table.sql"
+        },
+        {
+          "repo": "core",
+          "file": "002_create_document_jobs.sql"
+        },
+        {
+          "repo": "core",
+          "file": "003_update_document_jobs_compliance.sql"
+        },
+        {
+          "repo": "core",
+          "file": "004_create_gym_iot_tables.sql"
+        },
+        {
+          "repo": "core",
+          "file": "005_create_core_payment_tables.sql"
+        },
+        {
+          "repo": "core",
+          "file": "006_create_control_plane_tables.sql"
+        },
+        {
+          "repo": "core",
+          "file": "007_add_affiliate_ref_and_tenant_payouts.sql"
+        },
+        {
+          "repo": "core",
+          "file": "008_add_onboarding_mode_to_tenants.sql"
+        },
+        {
+          "repo": "core",
+          "file": "008_whitelist_partners_bank_and_payouts.sql"
+        },
+        {
+          "repo": "core",
+          "file": "009_create_campaign_attributions_and_seed_onlineboost.sql"
+        },
+        {
+          "repo": "core",
+          "file": "010_local_service_v1_booking_state_engine.sql"
+        },
+        {
+          "repo": "core",
+          "file": "011_booking_reminders_auto_scheduler.sql"
+        },
+        {
+          "repo": "core",
+          "file": "012_reader_notifications_hybrid_callback.sql"
+        },
+        {
+          "repo": "core",
+          "file": "013_add_screening_and_bank_details_to_affiliates.sql"
+        },
+        {
+          "repo": "core",
+          "file": "014_create_control_plane_tenant_prospects.sql"
+        },
+        {
+          "repo": "core",
+          "file": "015_create_cs_agents_and_update_conversations.sql"
+        },
+        {
+          "repo": "core",
+          "file": "016_create_whatsapp_connections.sql"
+        },
+        {
+          "repo": "core",
+          "file": "017_update_cs_agents_team_access.sql"
+        },
+        {
+          "repo": "core",
+          "file": "018_add_activation_unique_constraints.sql"
+        },
+        {
+          "repo": "core",
+          "file": "019_add_is_connected_to_whatsapp_connections.sql"
+        },
+        {
+          "repo": "core",
+          "file": "020_create_waba_conversations.sql"
+        },
+        {
+          "repo": "core",
+          "file": "021_create_outbound_messages.sql"
+        },
+        {
+          "repo": "core",
+          "file": "022_create_inbound_webhook_events.sql"
+        },
+        {
+          "repo": "core",
+          "file": "023_create_tenant_waba_configs.sql"
+        },
+        {
+          "repo": "core",
+          "file": "024_create_payment_orders.sql"
+        },
+        {
+          "repo": "core",
+          "file": "025_add_outbound_channel_lock_and_idempotency.sql"
+        },
+        {
+          "repo": "core",
+          "file": "026_add_provider_to_conversations.sql"
+        },
+        {
+          "repo": "core",
+          "file": "026_crm_ssot_and_orders_contact_id.sql"
+        },
+        {
+          "repo": "core",
+          "file": "20260925_create_booking_slots_and_bot_profiles.sql"
+        }
       ]
     },
     {
       "phase": "PHASE_2_INBOX_SCHEMA_AND_RECONCILIATION",
       "description": "Inbox migrations in dependency-reconciled order with C-01/C-02/C-03/C-04 fixes before Core 027-030 RLS hardening",
       "entries": [
-        {"repo": "reconciliation", "file": "R02_c02_reconcile_whatsapp_connections_union.sql"},
-        {"repo": "inbox", "file": "20260918_create_whatsapp_connections.sql"},
-        {"repo": "reconciliation", "file": "R02_c02_reconcile_whatsapp_connections_union.sql"},
-        {"repo": "reconciliation", "file": "R01_c01_reconcile_payment_events_pg17.sql", "replaces_inbox": "20260921_create_payment_events.sql"},
-        {"repo": "inbox", "file": "20260923_create_message_outbox.sql"},
-        {"repo": "inbox", "file": "20260923_extend_message_outbox.sql"},
-        {"repo": "inbox", "file": "20260924_create_tool_audit_logs.sql"},
-        {"repo": "inbox", "file": "20260925_create_booking_slots_and_bot_profiles.sql"},
-        {"repo": "inbox", "file": "20260925_create_order_items.sql"},
-        {"repo": "inbox", "file": "20260926_add_is_connected_to_whatsapp_connections.sql"},
-        {"repo": "inbox", "file": "20260926_add_metadata_to_orders.sql"},
-        {"repo": "inbox", "file": "20260930_add_product_alias_columns_and_sync.sql"},
-        {"repo": "inbox", "file": "20260930_remediate_public_rls_security.sql"},
-        {"repo": "inbox", "file": "20261002_add_is_archived_to_orders.sql"},
-        {"repo": "inbox", "file": "20261002_add_quantity_to_orders.sql"},
-        {"repo": "inbox", "file": "20261002_create_store_shipping_configs_and_self_pickup.sql"},
-        {"repo": "inbox", "file": "20261003_add_telegram_chat_id_to_tenants.sql"},
-        {"repo": "inbox", "file": "20261003_create_channel_bindings.sql"},
-        {"repo": "inbox", "file": "20261003_create_order_audit_logs.sql"},
-        {"repo": "inbox", "file": "20261003_create_shop_subscriptions.sql"},
-        {"repo": "inbox", "file": "20261003_create_telegram_group_mappings.sql"},
-        {"repo": "inbox", "file": "20261003_payment_evidence_and_capi_outbox.sql"},
-        {"repo": "inbox", "file": "20261004_add_granted_subscription_status_and_grant_type.sql"},
-        {"repo": "inbox", "file": "20261004_add_order_number_to_orders.sql"},
-        {"repo": "reconciliation", "file": "R05_pg17_compat_credit_ledger_tables.sql", "replaces_inbox": "20261004_create_credit_ledger_tables.sql"},
-        {"repo": "inbox", "file": "20261004_create_payment_observations_and_outbox.sql"},
-        {"repo": "inbox", "file": "20261004_create_shared_cart_engine.sql"},
-        {"repo": "inbox", "file": "20261008_create_creator_and_studio_tables.sql"},
-        {"repo": "inbox", "file": "20261008_create_store_reseller_system.sql"},
-        {"repo": "inbox", "file": "20261009_create_studio_credit_audit_logs.sql"},
-        {"repo": "inbox", "file": "20261009_create_studio_intelligence_tables.sql"},
-        {"repo": "inbox", "file": "20261009_create_studio_workspaces.sql"},
-        {"repo": "inbox", "file": "20261009_seed_indonesian_hook_patterns.sql"},
-        {"repo": "inbox", "file": "20261010_add_product_type_to_affiliate_commissions.sql"},
-        {"repo": "inbox", "file": "20261010_seed_onlineboost_digital_products.sql"},
-        {"repo": "inbox", "file": "20261012_add_notified_at_to_orders.sql"},
-        {"repo": "inbox", "file": "20261012_create_atomic_bot_control_rpc.sql"},
-        {"repo": "inbox", "file": "20261016_create_general_ledger.sql"},
-        {"repo": "inbox", "file": "20261016_create_outbox_events.sql"},
-        {"repo": "inbox", "file": "20261016_fix_bot_control_state_sync.sql"},
-        {"repo": "inbox", "file": "20261016_harden_security_definer_functions.sql"},
-        {"repo": "inbox", "file": "20261017_add_ads_performance_tier_enum.sql"},
-        {"repo": "inbox", "file": "20261017_add_bot_control_columns_to_conversations.sql"},
-        {"repo": "reconciliation", "file": "R03_c03_harmonize_conversations_status.sql"},
-        {"repo": "inbox", "file": "20261018_create_creator_tips.sql"},
-        {"repo": "inbox", "file": "20261018_create_reseller_partnerships.sql"},
-        {"repo": "inbox", "file": "20261018_reseller_foundation_p0.sql"},
-        {"repo": "inbox", "file": "20261020_add_phone_and_whatsapp_to_tenants.sql"},
-        {"repo": "inbox", "file": "20261020_create_tenant_booking_slots.sql"},
-        {"repo": "inbox", "file": "20261020_create_tenant_drivers.sql"},
-        {"repo": "inbox", "file": "20261021_create_atomic_studio_refund_rpc.sql"},
-        {"repo": "inbox", "file": "20261021_harden_atomic_reservation_rpc.sql"},
-        {"repo": "inbox", "file": "20261021_harden_atomic_studio_credits.sql"},
-        {"repo": "inbox", "file": "20261021_tenant_scoped_rpc_security.sql"},
-        {"repo": "inbox", "file": "20261030_global_auth_studio_and_creator.sql"},
-        {"repo": "inbox", "file": "20261030_atomic_google_identity_linking.sql"},
-        {"repo": "inbox", "file": "20261030_profile_trigger_observability.sql"},
-        {"repo": "inbox", "file": "20261030_shared_oauth_state_replay_protection.sql"},
-        {"repo": "inbox", "file": "20261105_update_shabu_ajhi_qris_payload.sql"},
-        {"repo": "inbox", "file": "20261105_update_shabu_ajhi_shipping_and_qris.sql"},
-        {"repo": "inbox", "file": "20261112_create_tenant_config_audit_logs.sql"},
-        {"repo": "inbox", "file": "20261115_distributed_jti_revocation.sql"},
-        {"repo": "inbox", "file": "20261120_monotonic_tenants_updated_at_trigger.sql"},
-        {"repo": "inbox", "file": "20261122_revoke_public_is_jti_revoked.sql"}
+        {
+          "repo": "reconciliation",
+          "file": "R02_c02_reconcile_whatsapp_connections_union.sql"
+        },
+        {
+          "repo": "inbox",
+          "file": "20260918_create_whatsapp_connections.sql"
+        },
+        {
+          "repo": "reconciliation",
+          "file": "R02_c02_reconcile_whatsapp_connections_union.sql"
+        },
+        {
+          "repo": "reconciliation",
+          "file": "R01_c01_reconcile_payment_events_pg17.sql",
+          "replaces_inbox": "20260921_create_payment_events.sql"
+        },
+        {
+          "repo": "inbox",
+          "file": "20260923_create_message_outbox.sql"
+        },
+        {
+          "repo": "inbox",
+          "file": "20260923_extend_message_outbox.sql"
+        },
+        {
+          "repo": "inbox",
+          "file": "20260924_create_tool_audit_logs.sql"
+        },
+        {
+          "repo": "inbox",
+          "file": "20260925_create_booking_slots_and_bot_profiles.sql"
+        },
+        {
+          "repo": "inbox",
+          "file": "20260925_create_order_items.sql"
+        },
+        {
+          "repo": "inbox",
+          "file": "20260926_add_is_connected_to_whatsapp_connections.sql"
+        },
+        {
+          "repo": "inbox",
+          "file": "20260926_add_metadata_to_orders.sql"
+        },
+        {
+          "repo": "inbox",
+          "file": "20260930_add_product_alias_columns_and_sync.sql"
+        },
+        {
+          "repo": "inbox",
+          "file": "20260930_remediate_public_rls_security.sql"
+        },
+        {
+          "repo": "inbox",
+          "file": "20261002_add_is_archived_to_orders.sql"
+        },
+        {
+          "repo": "inbox",
+          "file": "20261002_add_quantity_to_orders.sql"
+        },
+        {
+          "repo": "inbox",
+          "file": "20261002_create_store_shipping_configs_and_self_pickup.sql"
+        },
+        {
+          "repo": "inbox",
+          "file": "20261003_add_telegram_chat_id_to_tenants.sql"
+        },
+        {
+          "repo": "inbox",
+          "file": "20261003_create_channel_bindings.sql"
+        },
+        {
+          "repo": "inbox",
+          "file": "20261003_create_order_audit_logs.sql"
+        },
+        {
+          "repo": "inbox",
+          "file": "20261003_create_shop_subscriptions.sql"
+        },
+        {
+          "repo": "inbox",
+          "file": "20261003_create_telegram_group_mappings.sql"
+        },
+        {
+          "repo": "inbox",
+          "file": "20261003_payment_evidence_and_capi_outbox.sql"
+        },
+        {
+          "repo": "inbox",
+          "file": "20261004_add_granted_subscription_status_and_grant_type.sql"
+        },
+        {
+          "repo": "inbox",
+          "file": "20261004_add_order_number_to_orders.sql"
+        },
+        {
+          "repo": "reconciliation",
+          "file": "R05_pg17_compat_credit_ledger_tables.sql",
+          "replaces_inbox": "20261004_create_credit_ledger_tables.sql"
+        },
+        {
+          "repo": "inbox",
+          "file": "20261004_create_payment_observations_and_outbox.sql"
+        },
+        {
+          "repo": "inbox",
+          "file": "20261004_create_shared_cart_engine.sql"
+        },
+        {
+          "repo": "inbox",
+          "file": "20261008_create_creator_and_studio_tables.sql"
+        },
+        {
+          "repo": "inbox",
+          "file": "20261008_create_store_reseller_system.sql"
+        },
+        {
+          "repo": "inbox",
+          "file": "20261009_create_studio_credit_audit_logs.sql"
+        },
+        {
+          "repo": "inbox",
+          "file": "20261009_create_studio_intelligence_tables.sql"
+        },
+        {
+          "repo": "inbox",
+          "file": "20261009_create_studio_workspaces.sql"
+        },
+        {
+          "repo": "inbox",
+          "file": "20261009_seed_indonesian_hook_patterns.sql"
+        },
+        {
+          "repo": "inbox",
+          "file": "20261010_add_product_type_to_affiliate_commissions.sql"
+        },
+        {
+          "repo": "inbox",
+          "file": "20261010_seed_onlineboost_digital_products.sql"
+        },
+        {
+          "repo": "inbox",
+          "file": "20261012_add_notified_at_to_orders.sql"
+        },
+        {
+          "repo": "inbox",
+          "file": "20261012_create_atomic_bot_control_rpc.sql"
+        },
+        {
+          "repo": "inbox",
+          "file": "20261016_create_general_ledger.sql"
+        },
+        {
+          "repo": "inbox",
+          "file": "20261016_create_outbox_events.sql"
+        },
+        {
+          "repo": "inbox",
+          "file": "20261016_fix_bot_control_state_sync.sql"
+        },
+        {
+          "repo": "inbox",
+          "file": "20261016_harden_security_definer_functions.sql"
+        },
+        {
+          "repo": "inbox",
+          "file": "20261017_add_ads_performance_tier_enum.sql"
+        },
+        {
+          "repo": "inbox",
+          "file": "20261017_add_bot_control_columns_to_conversations.sql"
+        },
+        {
+          "repo": "reconciliation",
+          "file": "R03_c03_harmonize_conversations_status.sql"
+        },
+        {
+          "repo": "inbox",
+          "file": "20261018_create_creator_tips.sql"
+        },
+        {
+          "repo": "inbox",
+          "file": "20261018_create_reseller_partnerships.sql"
+        },
+        {
+          "repo": "inbox",
+          "file": "20261018_reseller_foundation_p0.sql"
+        },
+        {
+          "repo": "inbox",
+          "file": "20261020_add_phone_and_whatsapp_to_tenants.sql"
+        },
+        {
+          "repo": "inbox",
+          "file": "20261020_create_tenant_booking_slots.sql"
+        },
+        {
+          "repo": "inbox",
+          "file": "20261020_create_tenant_drivers.sql"
+        },
+        {
+          "repo": "inbox",
+          "file": "20261021_create_atomic_studio_refund_rpc.sql"
+        },
+        {
+          "repo": "inbox",
+          "file": "20261021_harden_atomic_reservation_rpc.sql"
+        },
+        {
+          "repo": "inbox",
+          "file": "20261021_harden_atomic_studio_credits.sql"
+        },
+        {
+          "repo": "inbox",
+          "file": "20261021_tenant_scoped_rpc_security.sql"
+        },
+        {
+          "repo": "inbox",
+          "file": "20261030_global_auth_studio_and_creator.sql"
+        },
+        {
+          "repo": "inbox",
+          "file": "20261030_atomic_google_identity_linking.sql"
+        },
+        {
+          "repo": "inbox",
+          "file": "20261030_profile_trigger_observability.sql"
+        },
+        {
+          "repo": "inbox",
+          "file": "20261030_shared_oauth_state_replay_protection.sql"
+        },
+        {
+          "repo": "inbox",
+          "file": "20261105_update_shabu_ajhi_qris_payload.sql"
+        },
+        {
+          "repo": "inbox",
+          "file": "20261105_update_shabu_ajhi_shipping_and_qris.sql"
+        },
+        {
+          "repo": "inbox",
+          "file": "20261112_create_tenant_config_audit_logs.sql"
+        },
+        {
+          "repo": "inbox",
+          "file": "20261115_distributed_jti_revocation.sql"
+        },
+        {
+          "repo": "inbox",
+          "file": "20261120_monotonic_tenants_updated_at_trigger.sql"
+        },
+        {
+          "repo": "inbox",
+          "file": "20261122_revoke_public_is_jti_revoked.sql"
+        },
+        {
+          "repo": "inbox",
+          "file": "20261123_orders_idempotency_and_projection.sql"
+        }
       ]
     },
     {
       "phase": "PHASE_3_CORE_HARDENING_AND_CANDIDATES",
       "description": "Core 027-030 FORCE RLS hardening AFTER Inbox table creation (C-07), followed by 031-036",
       "entries": [
-        {"repo": "core", "file": "027_harden_rls_tenants_commerce_products_carts_attributions.sql"},
-        {"repo": "core", "file": "028_harden_rls_affiliates_commissions_cart_items.sql"},
-        {"repo": "core", "file": "029_fix_commerce_products_public_rls.sql"},
-        {"repo": "core", "file": "030_harden_rls_all_remaining_tenant_tables.sql"},
-        {"repo": "reconciliation", "file": "R06_pg17_compat_031_b2_remediation.sql", "replaces_core": "031_b2_remediation_suite.sql"},
-        {"repo": "core", "file": "032_create_payment_replay_nonces.sql"},
-        {"repo": "core", "file": "033a_stage3_payment_settlement_expand_phase.sql"},
-        {"repo": "core", "file": "033b_stage3_payment_settlement_migrate_validate_phase.sql"},
-        {"repo": "core", "file": "033c_stage3_payment_settlement_contract_phase.sql"},
-        {"repo": "core", "file": "034_create_trial_quota_reservations.sql"},
-        {"repo": "core", "file": "035_durable_checkout_sessions.sql"},
-        {"repo": "core", "file": "036_create_merchants_registry.sql"}
+        {
+          "repo": "core",
+          "file": "027_harden_rls_tenants_commerce_products_carts_attributions.sql"
+        },
+        {
+          "repo": "core",
+          "file": "028_harden_rls_affiliates_commissions_cart_items.sql"
+        },
+        {
+          "repo": "core",
+          "file": "029_fix_commerce_products_public_rls.sql"
+        },
+        {
+          "repo": "core",
+          "file": "030_harden_rls_all_remaining_tenant_tables.sql"
+        },
+        {
+          "repo": "reconciliation",
+          "file": "R06_pg17_compat_031_b2_remediation.sql",
+          "replaces_core": "031_b2_remediation_suite.sql"
+        },
+        {
+          "repo": "core",
+          "file": "032_create_payment_replay_nonces.sql"
+        },
+        {
+          "repo": "core",
+          "file": "033a_stage3_payment_settlement_expand_phase.sql"
+        },
+        {
+          "repo": "core",
+          "file": "033b_stage3_payment_settlement_migrate_validate_phase.sql"
+        },
+        {
+          "repo": "core",
+          "file": "033c_stage3_payment_settlement_contract_phase.sql"
+        },
+        {
+          "repo": "core",
+          "file": "034_create_trial_quota_reservations.sql"
+        },
+        {
+          "repo": "core",
+          "file": "035_durable_checkout_sessions.sql"
+        },
+        {
+          "repo": "core",
+          "file": "036_create_merchants_registry.sql"
+        },
+        {
+          "repo": "core",
+          "file": "037_core_payment_intent_idempotency_and_settlement_outbox.sql"
+        }
       ]
     },
     {
       "phase": "PHASE_4_POST_REPLAY_RECONCILIATION_CLOSURE",
       "description": "Post-replay wildcard policy elimination, FORCE RLS sweep, and C-08 privilege & trigger verification",
       "entries": [
-        {"repo": "reconciliation", "file": "R04_c07_c08_post_rls_and_privilege_hardening.sql"}
+        {
+          "repo": "reconciliation",
+          "file": "R04_c07_c08_post_rls_and_privilege_hardening.sql"
+        }
       ]
     }
   ]
