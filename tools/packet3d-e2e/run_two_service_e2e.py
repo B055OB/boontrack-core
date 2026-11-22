@@ -245,7 +245,7 @@ def run_all(env_path: Path) -> Dict[str, Any]:
             "paymentMethod": "qris",
         },
         headers={"Idempotency-Key": f"idem-ob-batch1-create-{uuid.uuid4().hex[:8]}"},
-        timeout=15.0,
+        timeout=30.0,
     )
     s1["s1a_checkout_create_order_ob_batch1"] = {
         "http_status": r_s1a.status_code,
@@ -260,6 +260,7 @@ def run_all(env_path: Path) -> Dict[str, Any]:
         })
 
     # S1b: Initiate REAL Rp 249.000 order via Inbox POST /api/v1/payments/qris/create
+    reset_proxies()
     order_id_s1 = f"ORD-P3D-OB249K-{uuid.uuid4().hex[:8].upper()}"
     idem_s1 = f"idem-{order_id_s1}"
     r_s1b = httpx.post(
@@ -732,7 +733,7 @@ def run_all(env_path: Path) -> Dict[str, Any]:
         ("5_webhooks_xendit", "POST", f"{INBOX_URL}/api/webhooks/xendit", {"external_id": order_id_s1, "status": "PAID", "amount": 249000}),
         ("6_webhooks_xendit_paid", "POST", f"{INBOX_URL}/api/webhooks/xendit/paid", {"external_id": order_id_s1, "status": "PAID", "amount": 249000}),
         ("7_orders_approve", "POST", f"{INBOX_URL}/api/orders/{order_late}/approve", {"tenant_slug": "onlineboost"}),
-        ("8_tenants_orders_quick_paid", "POST", f"{INBOX_URL}/api/v1/tenants/onlineboost/orders/{order_late}/quick-paid", {}),
+        ("8_tenants_orders_quick_paid", "POST", f"{INBOX_URL}/api/v1/orders/{order_late}/quick-paid", {}),
     ]
     for name, method, url, payload in http_dark_routes:
         resp = httpx.request(method, url, json=payload, timeout=10.0)
@@ -835,8 +836,8 @@ def run_all(env_path: Path) -> Dict[str, Any]:
 
 
 def main() -> int:
-    env_path = Path(sys.argv[1]) if len(sys.argv) > 1 else Path(r"C:\Users\Alldy\.gemini\antigravity\brain\1c58429a-22f8-49ec-b556-3793835631e2\scratch\p3d_e2e_env.json")
-    out_path = Path(sys.argv[2]) if len(sys.argv) > 2 else Path(r"C:\Users\Alldy\.gemini\antigravity\brain\1c58429a-22f8-49ec-b556-3793835631e2\scratch\p3d_e2e_evidence.json")
+    env_path = Path(sys.argv[1]) if len(sys.argv) > 1 else Path(r"C:\Users\Alldy\.gemini\antigravity\brain\39d9f147-7dba-45c5-b9f9-0970776d2930\scratch\p3d_e2e_env.json")
+    out_path = Path(sys.argv[2]) if len(sys.argv) > 2 else Path(r"C:\Users\Alldy\.gemini\antigravity\brain\39d9f147-7dba-45c5-b9f9-0970776d2930\scratch\p3d_e2e_evidence.json")
     ev = run_all(env_path)
     out_path.write_text(json.dumps(ev, indent=2, default=str), encoding="utf-8")
     print(json.dumps(ev, indent=2, default=str))

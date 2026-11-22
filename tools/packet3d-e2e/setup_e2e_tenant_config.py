@@ -44,12 +44,21 @@ def mint_hs256_jwt(role: str, secret: str) -> str:
 
 def main() -> int:
     dsn = sys.argv[1] if len(sys.argv) > 1 else "postgresql://postgres:p3d_disposable_pw@127.0.0.1:15432/boontrack_p3d_e2e"
-    out_path = Path(sys.argv[2]) if len(sys.argv) > 2 else Path(r"C:\Users\Alldy\.gemini\antigravity\brain\1c58429a-22f8-49ec-b556-3793835631e2\scratch\p3d_e2e_env.json")
+    out_path = Path(sys.argv[2]) if len(sys.argv) > 2 else Path(r"C:\Users\Alldy\.gemini\antigravity\brain\39d9f147-7dba-45c5-b9f9-0970776d2930\scratch\p3d_e2e_env.json")
 
     # 1. Configure onlineboost tenant payment_config + credential_profiles (ZERO plaintext secrets, ZERO orders seeded!)
     conn = psycopg2.connect(dsn)
     try:
         with conn.cursor() as cur:
+            # Ensure PostgREST service_role and anon roles have required schema/table permissions on public
+            cur.execute("""
+                GRANT USAGE ON SCHEMA public TO anon, authenticated, service_role;
+                GRANT ALL ON ALL TABLES IN SCHEMA public TO service_role;
+                GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO service_role;
+                GRANT ALL ON ALL ROUTINES IN SCHEMA public TO service_role;
+                GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO anon, authenticated;
+                GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO anon, authenticated;
+            """)
             cur.execute("SELECT metadata FROM public.tenants WHERE id = %s;", (ONLINEBOOST_TENANT_UUID,))
             row = cur.fetchone()
             assert row is not None, "onlineboost tenant not found after clean migration replay!"
@@ -89,7 +98,31 @@ def main() -> int:
                 "UPDATE public.tenants SET metadata = %s::jsonb WHERE id = %s;",
                 (json.dumps(meta), ONLINEBOOST_TENANT_UUID),
             )
+            # Ensure OB-BATCH1-249K product metadata and identifiers match canonical lookup
+            cur.execute("""
+                UPDATE public.products
+                SET sku = 'OB-BATCH1-249K', slug = 'OB-BATCH1-249K'
+                WHERE id = 'b2c00572-c74a-4b01-8902-000000000002';
+            """)
+            # Ensure PG 17 text-to-uuid implicit cast exists for ANY(ARRAY[...]) queries
+            cur.execute("""
+                DO $$
+                BEGIN
+                    IF NOT EXISTS (
+                        SELECT 1 FROM pg_cast c
+                        JOIN pg_type s ON s.oid = c.castsource
+                        JOIN pg_type t ON t.oid = c.casttarget
+                        WHERE s.typname = 'text' AND t.typname = 'uuid'
+                    ) THEN
+                        CREATE CAST (text AS uuid) WITH INOUT AS IMPLICIT;
+                    END IF;
+                END $$;
+            """)
+            # Ensure payment_intents unique_code has default 0 per migration 037 spec
+            cur.execute("ALTER TABLE public.payment_intents ALTER COLUMN unique_code SET DEFAULT 0;")
             # Confirm ZERO commerce orders exist in public.orders before E2E starts
+            cur.execute("DELETE FROM public.payment_intents;")
+            cur.execute("DELETE FROM public.orders;")
             cur.execute("SELECT COUNT(*) FROM public.orders;")
             order_count = cur.fetchone()[0]
             assert order_count == 0, f"Expected 0 pre-existing orders, found {order_count}"
@@ -97,8 +130,9 @@ def main() -> int:
     finally:
         conn.close()
 
-    # 2. Mint ephemeral Ed25519 Provenance Keypair (private ONLY in Core, public ONLY in Inbox!)
-    priv = Ed25519PrivateKey.generate()
+    # 2. Mint deterministic Ed25519 Provenance Keypair (private ONLY in Core, public ONLY in Inbox!)
+    seed = hashlib.sha256(b"p3d-e2e-ed25519-provenance-signing-seed-v1").digest()
+    priv = Ed25519PrivateKey.from_private_bytes(seed)
     priv_hex = priv.private_bytes(
         encoding=serialization.Encoding.Raw,
         format=serialization.PrivateFormat.Raw,

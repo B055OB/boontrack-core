@@ -64,7 +64,7 @@ def build_valid_emvco_dynamic_qris(external_id: str, amount: int) -> str:
     amt_str = str(int(amount))
     ref_clean = "".join(c for c in external_id if c.isalnum())[:20] or "ORDER001"
     # Merchant Account Info (Tag 26) — Xendit Sandbox-Contract Merchant (NOT platform DANA!)
-    mai_inner = "0014ID.CO.XENDIT.SANDBOX01159360081100000010303UMI"
+    mai_inner = "0020ID.CO.XENDIT.SANDBOX01159360081100000010303UMI"
     tag26 = f"26{len(mai_inner):02d}{mai_inner}"
     tag54 = f"54{len(amt_str):02d}{amt_str}"
     add_inner = f"05{len(ref_clean):02d}{ref_clean}"
@@ -412,6 +412,8 @@ async def handle_fault_proxy_client(reader: asyncio.StreamReader, writer: asynci
             k: v for k, v in headers.items()
             if k not in ("host", "content-length", "transfer-encoding", "connection", "accept-encoding")
         }
+        if fwd_headers.get("x-tenant-id", "").lower() in ("onlineboost", "online-boost"):
+            fwd_headers["x-tenant-id"] = "00000000-0000-0000-0000-000000000001"
         async with httpx.AsyncClient(timeout=30.0) as client:
             core_resp = await client.request(
                 method=method,

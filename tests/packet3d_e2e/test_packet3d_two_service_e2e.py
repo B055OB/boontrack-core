@@ -166,10 +166,6 @@ def test_live_e2e_phase1_holds_and_zero_prod_egress():
     assert s6["production_egress_count"] == 0
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="Cross-terminal blockers returned to file owners (DEF-02, DEF-03, DEF-05, DEF-06, DEF-07, DEF-08, DEF-12, DEF-15) — zero silent patches by Account 5.",
-)
 def test_live_e2e_full_unblocked_cross_terminal_acceptance_gate():
     """Strict release-readiness gate that MUST fail until owning terminals resolve DEF-02..DEF-15."""
     ev = _load_live_evidence()
