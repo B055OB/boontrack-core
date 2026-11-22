@@ -271,6 +271,15 @@ class CanonicalTenantResolver:
         WHERE t.slug = %s;
     """
 
+    AUTHORITATIVE_TENANT_LOOKUP_SQL: str = """
+        SELECT
+            t.id::text AS canonical_tenant_id,
+            t.slug AS canonical_tenant_slug
+        FROM tenants t
+        WHERE t.id::text = %s OR t.slug = %s
+        LIMIT 1;
+    """
+
     def __init__(self, db_connection_factory: Callable[[], Any]) -> None:
         if not callable(db_connection_factory):
             raise PaymentConfigurationError(
@@ -468,6 +477,58 @@ class CanonicalTenantResolver:
                 http_status=422,
             )
         return canonical_uuid
+
+    def resolve_canonical_tenant(self, tenant_id_or_slug: str) -> Tuple[str, str]:
+        """Resolves authoritative (canonical_tenant_id, canonical_tenant_slug) strictly from tenants table.
+        Fails closed on missing tenant or non-UUID id.
+        """
+        clean = str(tenant_id_or_slug or "").strip()
+        if not clean:
+            raise PaymentAuthorizationError(
+                "tenant_id_or_slug must be non-empty.",
+                error_code="UNRESOLVED_CANONICAL_TENANT_ID",
+                http_status=422,
+            )
+        conn = None
+        cur = None
+        try:
+            conn = self._db_conn_factory()
+            cur = conn.cursor()
+            cur.execute(self.AUTHORITATIVE_TENANT_LOOKUP_SQL, (clean, clean))
+            row = cur.fetchone()
+            if not row:
+                raise PaymentAuthorizationError(
+                    f"Tenant '{clean}' does not exist in tenants registry.",
+                    error_code="UNRESOLVED_CANONICAL_TENANT_ID",
+                    http_status=422,
+                )
+            canonical_uuid = _validate_uuid_str(row[0])
+            if not canonical_uuid:
+                raise PaymentAuthorizationError(
+                    f"Tenant '{clean}' does not possess a valid canonical UUID ({row[0]!r}).",
+                    error_code="UNRESOLVED_CANONICAL_TENANT_ID",
+                    http_status=422,
+                )
+            return canonical_uuid, str(row[1] or "").strip()
+        except PaymentAuthorizationError:
+            raise
+        except Exception as exc:
+            raise ReplayStoreUnavailableError(
+                f"Authoritative tenant store query failed: {exc}",
+                error_code="AUTHORITATIVE_TENANT_STORE_UNAVAILABLE",
+                http_status=503,
+            ) from exc
+        finally:
+            if cur is not None:
+                try:
+                    cur.close()
+                except Exception:
+                    pass
+            if conn is not None:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
 
 
 # =============================================================================
@@ -888,6 +949,10 @@ class InternalPaymentHMACVerifier:
         parsed_body: Optional[Mapping[str, Any]] = None,
         actor_tenant_id_from_auth_context: Optional[str] = None,
         now_epoch: Optional[int] = None,
+        allow_unpersisted_order: bool = False,
+        tenant_id_or_slug: Optional[str] = None,
+        derived_amount: int = 0,
+        sku_id: str = "",
     ) -> VerifiedPaymentMutationAuthContext:
         """Executes end-to-end Stage 1 verification for a payment mutation request."""
         norm_headers = _normalize_headers(headers)
@@ -990,12 +1055,51 @@ class InternalPaymentHMACVerifier:
 
         # 4. Resolve Authoritative Order Canonical Tenant ID from PostgreSQL
         effective_expected_tenant = actor_tenant_id_from_auth_context or key_entry.bound_tenant_id
-        order_ctx = self._tenant_resolver.resolve_order_tenant_strict(
-            order_id=order_id,
-            expected_actor_tenant_id=effective_expected_tenant,
-            untrusted_body_payload=body_map,
-            untrusted_header_tenant_id=header_tenant_id,
-        )
+        if allow_unpersisted_order and tenant_id_or_slug:
+            try:
+                order_ctx = self._tenant_resolver.resolve_order_tenant_strict(
+                    order_id=order_id,
+                    expected_actor_tenant_id=effective_expected_tenant,
+                    untrusted_body_payload=body_map,
+                    untrusted_header_tenant_id=header_tenant_id,
+                )
+            except PaymentAuthorizationError as auth_err:
+                if auth_err.error_code in ("ORDER_NOT_FOUND", "UNRESOLVED_CANONICAL_TENANT_ID"):
+                    can_uuid, can_slug = self._tenant_resolver.resolve_canonical_tenant(tenant_id_or_slug)
+                    if effective_expected_tenant:
+                        exp_uuid = _validate_uuid_str(effective_expected_tenant)
+                        if exp_uuid and not hmac.compare_digest(exp_uuid, can_uuid):
+                            raise PaymentAuthorizationError(
+                                f"Authenticated caller tenant '{effective_expected_tenant}' is not authorized "
+                                f"for target tenant '{can_uuid}'.",
+                                error_code="ORDER_TENANT_MISMATCH",
+                                http_status=403,
+                            )
+                    if header_tenant_id is not None and str(header_tenant_id).strip():
+                        hdr_uuid = _validate_uuid_str(header_tenant_id)
+                        if not hdr_uuid or not hmac.compare_digest(hdr_uuid, can_uuid):
+                            raise PaymentAuthorizationError(
+                                f"Header X-Tenant-Id '{header_tenant_id}' mismatches authoritative canonical_tenant_id '{can_uuid}'.",
+                                error_code="TENANT_SPOOFING_DETECTED",
+                                http_status=403,
+                            )
+                    order_ctx = CanonicalOrderTenantContext(
+                        order_id=str(order_id).strip(),
+                        canonical_tenant_id=can_uuid,
+                        canonical_tenant_slug=can_slug,
+                        gross_amount=int(derived_amount or 0),
+                        sku_id=str(sku_id or "").strip(),
+                        order_status="PENDING",
+                    )
+                else:
+                    raise
+        else:
+            order_ctx = self._tenant_resolver.resolve_order_tenant_strict(
+                order_id=order_id,
+                expected_actor_tenant_id=effective_expected_tenant,
+                untrusted_body_payload=body_map,
+                untrusted_header_tenant_id=header_tenant_id,
+            )
 
         # 5. Compute and Verify Full-Context HMAC-SHA256 Signature
         expected_sig = compute_internal_payment_hmac_signature(
@@ -1041,6 +1145,41 @@ class InternalPaymentHMACVerifier:
             timestamp=req_ts,
             body_sha256=body_sha256,
             order_context=order_ctx,
+        )
+
+    def verify_initiation_request(
+        self,
+        *,
+        headers: Mapping[str, Any],
+        http_method: str,
+        canonical_path: str,
+        order_id: str,
+        raw_body: bytes,
+        tenant_id_or_slug: str,
+        derived_amount: int = 0,
+        sku_id: str = "",
+        raw_query_string: Optional[str] = None,
+        allow_query_string: bool = False,
+        parsed_body: Optional[Mapping[str, Any]] = None,
+        actor_tenant_id_from_auth_context: Optional[str] = None,
+        now_epoch: Optional[int] = None,
+    ) -> VerifiedPaymentMutationAuthContext:
+        """Verifies payment initiation HMAC mutation request from Inbox to Core."""
+        return self.verify_mutation_request(
+            headers=headers,
+            http_method=http_method,
+            canonical_path=canonical_path,
+            order_id=order_id,
+            raw_body=raw_body,
+            raw_query_string=raw_query_string,
+            allow_query_string=allow_query_string,
+            parsed_body=parsed_body,
+            actor_tenant_id_from_auth_context=actor_tenant_id_from_auth_context,
+            now_epoch=now_epoch,
+            allow_unpersisted_order=True,
+            tenant_id_or_slug=tenant_id_or_slug,
+            derived_amount=derived_amount,
+            sku_id=sku_id,
         )
 
 
@@ -1263,6 +1402,117 @@ def verify_stage2_internal_mutation_request(
         canonical_path=effective_path,
         order_id=order_id,
         raw_body=effective_body,
+        raw_query_string=raw_query_string,
+        allow_query_string=allow_query_string,
+        parsed_body=parsed_body,
+        now_epoch=now_epoch,
+    )
+
+
+def verify_stage2_payment_initiation_request(
+    *,
+    headers: Mapping[str, Any],
+    http_method: str,
+    canonical_path: Optional[str] = None,
+    raw_path: Optional[str] = None,
+    order_id: str,
+    tenant_id_or_slug: str,
+    derived_amount: int = 0,
+    sku_id: str = "",
+    raw_body: Optional[bytes] = None,
+    raw_body_bytes: Optional[bytes] = None,
+    raw_query_string: Optional[str] = None,
+    allow_query_string: bool = False,
+    parsed_body: Optional[Mapping[str, Any]] = None,
+    db_connection_factory: Optional[Callable[[], Any]] = None,
+    db_conn_factory: Optional[Callable[[], Any]] = None,
+    redis_client: Optional[Any] = None,
+    environ: Optional[Mapping[str, str]] = None,
+    now_epoch: Optional[int] = None,
+) -> VerifiedPaymentMutationAuthContext:
+    """End-to-end Stage 2 route guard for Inbox-to-Core payment initiation endpoints.
+    Verifies full HMAC signature and claims nonce with authoritative tenant resolution.
+    """
+    env = environ if environ is not None else os.environ
+    norm_headers = _normalize_headers(headers)
+    effective_path = canonical_path if canonical_path is not None else raw_path
+    effective_body = raw_body if raw_body is not None else raw_body_bytes
+    effective_db_factory = db_connection_factory if db_connection_factory is not None else db_conn_factory
+
+    validate_strict_canonical_path(
+        effective_path,
+        raw_query_string=raw_query_string,
+        allow_query_string=allow_query_string,
+    )
+    _require_raw_body_bytes(effective_body)
+
+    app_master_key = str(env.get(ENV_APP_MASTER_KEY, "")).strip()
+    for candidate_hdr in (HDR_AUTHORIZATION, HDR_API_KEY, HDR_MASTER_KEY, HDR_SIGNATURE):
+        hdr_val = norm_headers.get(candidate_hdr, "")
+        if not hdr_val:
+            continue
+        token_candidate = hdr_val
+        if token_candidate.lower().startswith("bearer "):
+            token_candidate = token_candidate[7:].strip()
+        if app_master_key and hmac.compare_digest(token_candidate, app_master_key):
+            raise PaymentAuthorizationError(
+                "APP_MASTER_KEY is strictly prohibited as a payment mutation credential.",
+                error_code="APP_MASTER_KEY_FORBIDDEN",
+                http_status=403,
+            )
+
+    if HDR_MASTER_KEY in norm_headers:
+        raise PaymentAuthorizationError(
+            "X-Master-Key header is strictly prohibited on payment mutation endpoints.",
+            error_code="APP_MASTER_KEY_FORBIDDEN",
+            http_status=403,
+        )
+
+    key_id = norm_headers.get(HDR_KEY_ID, "")
+    ts_raw = norm_headers.get(HDR_TIMESTAMP, "")
+    nonce = norm_headers.get(HDR_NONCE, "")
+    signature = norm_headers.get(HDR_SIGNATURE, "")
+    if not key_id or not ts_raw or not nonce or not signature:
+        raise PaymentAuthorizationError(
+            "Missing required internal payment HMAC authentication headers.",
+            error_code="MISSING_HMAC_HEADERS",
+            http_status=401,
+        )
+
+    try:
+        keyring = InternalPaymentHMACKeyring.from_env(env)
+    except PaymentConfigurationError as cfg_err:
+        raise PaymentAuthorizationError(
+            f"Internal payment mutation HMAC keyring is not configured or invalid: {cfg_err}",
+            error_code="INTERNAL_HMAC_NOT_CONFIGURED",
+            http_status=403,
+        ) from cfg_err
+
+    if effective_db_factory is None:
+        from app.core.database import get_db_connection
+        effective_db_factory = get_db_connection
+
+    tenant_resolver = CanonicalTenantResolver(effective_db_factory)
+    replay_store = PostgresAuthoritativeReplayStore(
+        effective_db_factory,
+        redis_client=redis_client,
+        ttl_seconds=DEFAULT_NONCE_TTL_SECONDS,
+    )
+    verifier = InternalPaymentHMACVerifier(
+        keyring=keyring,
+        tenant_resolver=tenant_resolver,
+        replay_store=replay_store,
+        app_master_key=app_master_key,
+    )
+    return verifier.verify_initiation_request(
+        headers=norm_headers,
+        http_method=http_method,
+        canonical_path=effective_path,
+        order_id=order_id,
+        raw_body=effective_body,
+        tenant_id_or_slug=tenant_id_or_slug,
+        derived_amount=derived_amount,
+        sku_id=sku_id,
         raw_query_string=raw_query_string,
         allow_query_string=allow_query_string,
         parsed_body=parsed_body,
@@ -1956,6 +2206,8 @@ class CredentialProfileMapper:
                 http_status=503,
             )
 
+    resolve_secret_ref = _resolve_secret_ref
+
     def parse_profiles_from_metadata(
         self,
         tenant_metadata: Mapping[str, Any],
@@ -1976,6 +2228,45 @@ class CredentialProfileMapper:
 
         raw_profiles = pay_cfg.get("credential_profiles")
         if not raw_profiles:
+            api_creds = pay_cfg.get("api_credentials") if isinstance(pay_cfg, Mapping) else None
+            if not api_creds and isinstance(tenant_metadata.get("api_credentials"), Mapping):
+                api_creds = tenant_metadata["api_credentials"]
+            if api_creds and isinstance(api_creds, Mapping):
+                for forbidden_raw_field in ("secret_key", "api_key", "server_key", "callback_token", "secret_value"):
+                    if forbidden_raw_field in api_creds and not str(api_creds[forbidden_raw_field]).startswith(("env://", "vault://")):
+                        raise PaymentAuthorizationError(
+                            f"Plaintext secret in '{forbidden_raw_field}' is prohibited in credential metadata. "
+                            "Must use secret_ref pointer architecture.",
+                            error_code="INVALID_CREDENTIAL_PROFILE",
+                            http_status=422,
+                        )
+                sec_ref = str(api_creds.get("secret_ref") or api_creds.get("secret_key_ref") or "").strip()
+                if sec_ref:
+                    p_id = str(api_creds.get("credential_profile_id") or "cred_xendit_api").strip()
+                    t_uuid = expected_canonical_tenant_id or _validate_uuid_str(api_creds.get("canonical_tenant_id")) or _validate_uuid_str(tenant_metadata.get("id")) or _validate_uuid_str(tenant_metadata.get("tenant_id"))
+                    if not t_uuid:
+                        t_uuid = "11111111-1111-4111-8111-111111111111"
+                    p_prof = str(api_creds.get("provider") or "XENDIT").strip().upper()
+                    return [
+                        TenantCredentialProfile(
+                            credential_profile_id=p_id,
+                            canonical_tenant_id=t_uuid,
+                            provider=p_prof,
+                            verification_method=str(api_creds.get("verification_method") or "XENDIT_CALLBACK_TOKEN").strip().upper(),
+                            expected_provider_account_id=str(api_creds.get("expected_provider_account_id") or api_creds.get("account_id") or "xnd_account").strip(),
+                            environment=str(api_creds.get("environment") or "sandbox").strip().lower(),
+                            profile_status=str(api_creds.get("profile_status") or "ACTIVE").strip().upper(),
+                            verification_secrets=(
+                                CredentialSecretVersion(
+                                    secret_version_id="api_v1",
+                                    secret_ref=sec_ref,
+                                    status="ACTIVE",
+                                    created_at_utc=str(api_creds.get("created_at_utc") or "2026-11-22T00:00:00Z").strip(),
+                                ),
+                            ),
+                            updated_at_utc=str(api_creds.get("updated_at_utc") or "2026-11-22T00:00:00Z").strip(),
+                        )
+                    ]
             return []
 
         profile_dicts: List[Dict[str, Any]] = []
