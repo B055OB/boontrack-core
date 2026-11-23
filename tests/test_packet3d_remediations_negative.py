@@ -9,12 +9,23 @@ from __future__ import annotations
 
 import os
 import uuid
-import pytest
+from datetime import datetime, timezone
 from pathlib import Path
+
+import pytest
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from fastapi.testclient import TestClient
 
 from app.main import app
 from app.core.database import get_db_connection
+from app.core.security.provenance_authority import (
+    ProvenanceSigner,
+    ProvenanceSigningKeyring,
+    ProvenanceVerifier,
+    TrustedSettlementVerificationBoundary,
+    commit_verified_settlement_transaction,
+)
 from app.services.academy_service import (
     generate_academy_qris_invoice,
     settle_academy_invoice,
@@ -22,6 +33,9 @@ from app.services.academy_service import (
     _PROCESSED_EVENTS,
     _ACADEMY_INVOICES,
 )
+from app.services.checkout_service import execute_order_settlement_transaction
+from app.services.payment.base import SettlementProvenanceError
+from app.services.payment_intent_lifecycle import PaymentIntentLifecycleService
 from tests.test_checkout_recovery_remediation import (
     _install_order_scoped_failure_trigger,
     _drop_trigger_and_function,
@@ -95,6 +109,257 @@ async def test_negative_outbox_failure_aborts_and_rolls_back_entire_settlement()
         _drop_trigger_and_function("payment_outbox_events", suffix)
 
 
+def test_negative_provenance_authority_outbox_failure_rolls_back_settlement():
+    """Negative Test 1b (Blocker B-1/B-2 — Provenance Authority):
+    Simulate DB failure specifically on payment_outbox_events insert inside
+    `commit_verified_settlement_transaction`. Proves full transaction rollback:
+    - Raises SettlementProvenanceError (DATABASE_UNAVAILABLE / HTTP 503)
+    - Zero payment_events persisted
+    - Zero financial_ledger persisted
+    - Zero payment_outbox_events persisted
+    - Order remains strictly PENDING
+    """
+    try:
+        _conn_probe = get_db_connection()
+        _conn_probe.close()
+    except Exception as exc:
+        pytest.skip(f"Live PostgreSQL required for provenance outbox rollback test is unreachable: {exc}")
+
+    order_id = f"ORD-PROV-OBX-{uuid.uuid4().hex[:8]}"
+    event_id = f"evt_prov_obx_{uuid.uuid4().hex[:8]}"
+    provider_event_id = f"qr_prov_obx_{uuid.uuid4().hex[:8]}"
+    suffix = f"prov_obx_{uuid.uuid4().hex[:8]}"
+    amount = 150000
+
+    # Seed pending order bound to canonical TENANT_ALPHA_UUID
+    conn = get_db_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO public.orders (
+                    id, tenant_id, tenant_slug, sku_id, product_id, product_title,
+                    status, payment_status, order_status, gross_amount, amount
+                ) VALUES (
+                    %s, %s, %s, 'SKU-OBX-NEG', 'SKU-OBX-NEG', 'Outbox Rollback Test SKU',
+                    'PENDING', 'PENDING', 'PENDING', %s, %s
+                );
+                """,
+                (order_id, TENANT_ALPHA_UUID, TENANT_ALPHA_SLUG, amount, amount),
+            )
+        conn.commit()
+    finally:
+        conn.close()
+
+    priv = Ed25519PrivateKey.generate()
+    priv_hex = priv.private_bytes(
+        encoding=serialization.Encoding.Raw,
+        format=serialization.PrivateFormat.Raw,
+        encryption_algorithm=serialization.NoEncryption(),
+    ).hex()
+    signing_kr = ProvenanceSigningKeyring({"neg-prov-k1": {"private_key_hex": priv_hex, "status": "ACTIVE"}})
+    signer = ProvenanceSigner(signing_kr)
+    verifier = ProvenanceVerifier(signing_kr)
+
+    cb_secret = "xendit_neg_test_callback_token_32chars_012345"
+    biz_id = "xnd_biz_neg_test_001"
+    raw_webhook = {
+        "id": event_id,
+        "event_id": event_id,
+        "business_id": biz_id,
+        "external_id": order_id,
+        "qr_id": provider_event_id,
+        "status": "PAID",
+        "amount": amount,
+        "currency": "IDR",
+    }
+    capability = TrustedSettlementVerificationBoundary.verify_pg_webhook_and_issue_capability(
+        provider="XENDIT",
+        verification_method="XENDIT_CALLBACK_TOKEN",
+        credential_profile_id="cred_xendit_neg_obx",
+        expected_provider_account_id=biz_id,
+        provider_verification_secret=cb_secret,
+        webhook_headers={"X-Callback-Token": cb_secret, "webhook-id": event_id},
+        webhook_payload=raw_webhook,
+        authoritative_order_id=order_id,
+        authoritative_canonical_tenant_id=TENANT_ALPHA_UUID,
+        authoritative_order_amount=amount,
+        authoritative_sku_id="SKU-OBX-NEG",
+        verified_at_utc=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+    )
+
+    _install_order_scoped_failure_trigger("payment_outbox_events", order_id, suffix)
+    try:
+        with pytest.raises(SettlementProvenanceError) as exc_info:
+            commit_verified_settlement_transaction(
+                capability=capability,
+                signer=signer,
+                verifier=verifier,
+                raw_webhook_payload=raw_webhook,
+                db_conn_factory=get_db_connection,
+            )
+        assert exc_info.value.error_code == "DATABASE_UNAVAILABLE"
+        assert exc_info.value.http_status == 503
+
+        snap = _fetch_order_db_snapshot(order_id)
+        assert snap["order"] is not None
+        assert snap["order"][3] == "PENDING"
+        assert len(snap["payment_events"]) == 0, "payment_events must roll back on outbox failure"
+        assert len(snap["financial_ledger"]) == 0, "financial_ledger must roll back on outbox failure"
+        assert len(snap["payment_outbox_events"]) == 0
+    finally:
+        _drop_trigger_and_function("payment_outbox_events", suffix)
+
+
+def test_negative_checkout_service_outbox_failure_rolls_back_settlement():
+    """Negative Test 1c (Blocker B-1 — Checkout Service):
+    Simulate DB failure specifically on payment_outbox_events insert inside
+    `execute_order_settlement_transaction`. Proves full transaction rollback:
+    - Exception propagates immediately
+    - Zero payment_events persisted
+    - Zero financial_ledger persisted
+    - Zero payment_outbox_events persisted
+    """
+    try:
+        _conn_probe = get_db_connection()
+        _conn_probe.close()
+    except Exception as exc:
+        pytest.skip(f"Live PostgreSQL required for checkout_service outbox rollback test is unreachable: {exc}")
+
+    order_id = f"ORD-CHK-OBX-{uuid.uuid4().hex[:8]}"
+    event_id = f"evt_chk_obx_{uuid.uuid4().hex[:8]}"
+    suffix = f"chk_obx_{uuid.uuid4().hex[:8]}"
+    amount = 125000
+
+    conn = get_db_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO public.orders (
+                    id, tenant_id, tenant_slug, sku_id, product_id, product_title,
+                    status, payment_status, order_status, gross_amount, amount
+                ) VALUES (
+                    %s, %s, %s, 'prod_digital', 'prod_digital', 'Digital Checkout Rollback Test',
+                    'PENDING', 'PENDING', 'PENDING', %s, %s
+                );
+                """,
+                (order_id, TENANT_ALPHA_UUID, TENANT_ALPHA_SLUG, amount, amount),
+            )
+        conn.commit()
+    finally:
+        conn.close()
+
+    _install_order_scoped_failure_trigger("payment_outbox_events", order_id, suffix)
+    try:
+        with pytest.raises(Exception) as exc_info:
+            execute_order_settlement_transaction(
+                event_id=event_id,
+                external_id=order_id,
+                tenant_id=TENANT_ALPHA_UUID,
+                amount=amount,
+                payload={"product_id": "prod_digital", "order_id": order_id},
+                provider="XENDIT",
+            )
+        assert "payment_outbox_events" in str(exc_info.value)
+
+        snap = _fetch_order_db_snapshot(order_id)
+        assert snap["order"] is not None
+        assert snap["order"][3] == "PENDING"
+        assert len(snap["payment_events"]) == 0, "payment_events must roll back on outbox failure"
+        assert len(snap["financial_ledger"]) == 0, "financial_ledger must roll back on outbox failure"
+        assert len(snap["payment_outbox_events"]) == 0
+    finally:
+        _drop_trigger_and_function("payment_outbox_events", suffix)
+
+
+def test_negative_payment_intent_lifecycle_outbox_exception_propagates_and_rolls_back():
+    """Negative Test 1d (Blocker B-2 — PaymentIntentLifecycleService):
+    1. Direct call to `_record_outbox_event` with a failing DB cursor MUST propagate
+       the exception instead of swallowing it.
+    2. Live PostgreSQL `mark_provider_result` with a failure trigger on `payment_outbox_events`
+       MUST propagate the DB error and roll back `payment_intents.initiation_state` to INITIATING.
+    """
+    svc = PaymentIntentLifecycleService()
+
+    # Part 1: Direct unit assertion — _record_outbox_event must NEVER swallow DB exceptions
+    class _FailingCursor:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def execute(self, sql, params=None):
+            raise RuntimeError("SIMULATED_OUTBOX_DB_FAILURE_B2")
+
+    class _FailingConn:
+        def cursor(self):
+            return _FailingCursor()
+
+    with pytest.raises(RuntimeError, match="SIMULATED_OUTBOX_DB_FAILURE_B2"):
+        svc._record_outbox_event(
+            aggregate_id="ORD-PIL-UNIT-001",
+            event_type="PAYMENT_INTENT_ACTIVATED",
+            payload={"order_id": "ORD-PIL-UNIT-001", "tenant_id": TENANT_ALPHA_UUID, "idempotency_key": "ik-pil-unit-001"},
+            conn=_FailingConn(),
+        )
+
+    # Part 2: Live PostgreSQL rollback proof on mark_provider_result
+    try:
+        _conn_probe = get_db_connection()
+        _conn_probe.close()
+    except Exception as exc:
+        pytest.skip(f"Live PostgreSQL required for payment_intent_lifecycle rollback test is unreachable: {exc}")
+
+    order_id = f"ORD-PIL-OBX-{uuid.uuid4().hex[:8]}"
+    idemp_key = f"ik-pil-obx-{uuid.uuid4().hex[:10]}"
+    suffix = f"pil_obx_{uuid.uuid4().hex[:8]}"
+
+    intent = svc.initiate_or_reconcile_intent(
+        tenant_id=TENANT_ALPHA_UUID,
+        order_id=order_id,
+        amount=99000,
+        idempotency_key=idemp_key,
+        request_payload={"order_id": order_id, "amount": 99000},
+    )
+    assert intent["initiation_state"] == "INITIATING"
+
+    _install_order_scoped_failure_trigger("payment_outbox_events", order_id, suffix)
+    try:
+        with pytest.raises(Exception) as exc_info:
+            svc.mark_provider_result(
+                idempotency_key=idemp_key,
+                success=True,
+                provider_ref="qr_pil_rollback_001",
+                qr_string="000201010212MOCKQRIS",
+            )
+        assert "payment_outbox_events" in str(exc_info.value)
+
+        # Verify payment_intents rolled back cleanly to INITIATING and 0 outbox rows exist
+        conn = get_db_connection()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT initiation_state, qr_string FROM public.payment_intents WHERE idempotency_key = %s;",
+                    (idemp_key,),
+                )
+                row = cur.fetchone()
+                assert row is not None
+                assert row[0] == "INITIATING", f"Expected INITIATING after rollback, got {row[0]}"
+                assert row[1] is None, "qr_string mutation must be rolled back when outbox insert fails"
+
+                cur.execute(
+                    "SELECT COUNT(*) FROM public.payment_outbox_events WHERE order_id = %s;",
+                    (order_id,),
+                )
+                assert cur.fetchone()[0] == 0
+        finally:
+            conn.close()
+    finally:
+        _drop_trigger_and_function("payment_outbox_events", suffix)
+
+
 # =============================================================================
 # 2. ZERO DIRECT UPDATE ORDERS & ZERO RUNTIME DDL STATIC AUDIT (BLOCKERS A & B)
 # =============================================================================
@@ -118,12 +383,27 @@ def test_negative_audit_zero_direct_orders_mutations_and_zero_runtime_ddl():
     assert "UPDATE orders" not in acad_src, "Direct 'UPDATE orders' found in academy_service.py"
     assert "UPDATE orders" not in xendit_src, "Direct 'UPDATE orders' found in xendit.py"
 
-    # Blocker B: Zero runtime DDL in settlement or dispatcher paths
+    # Blocker B: Zero runtime DDL and zero swallowed outbox exceptions
+    lifecycle_src = (CORE_ROOT / "app" / "services" / "payment_intent_lifecycle.py").read_text(encoding="utf-8")
+    mig037_src = (
+        CORE_ROOT / "migrations" / "037_core_payment_intent_idempotency_and_settlement_outbox.sql"
+    ).read_text(encoding="utf-8")
+    init_schema_src = (CORE_ROOT / "scripts" / "init_test_postgres_schema.py").read_text(encoding="utf-8")
+
+    assert "Outbox write note" not in lifecycle_src, "Swallowed outbox exception found in payment_intent_lifecycle.py"
+    assert "uq_payment_outbox_events_idempotency_key" in mig037_src, (
+        "Migration 037 missing uq_payment_outbox_events_idempotency_key UNIQUE (idempotency_key)"
+    )
+    assert "uq_payment_outbox_events_idempotency_key" in init_schema_src, (
+        "init_test_postgres_schema.py missing uq_payment_outbox_events_idempotency_key parity"
+    )
+
     for module_name, src in [
         ("provenance_authority", prov_src),
         ("academy_service", acad_src),
         ("checkout_service", checkout_src),
         ("payment_outbox_dispatcher", dispatcher_src),
+        ("payment_intent_lifecycle", lifecycle_src),
     ]:
         assert "CREATE TABLE IF NOT EXISTS payment_outbox_events" not in src, (
             f"Runtime DDL CREATE TABLE found in {module_name}"

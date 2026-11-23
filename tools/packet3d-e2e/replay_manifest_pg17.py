@@ -101,7 +101,12 @@ def replay_all(dsn: str, inbox_dir: Path) -> Dict[str, Any]:
     conn.close()
     report["pg_database"] = db_name
     report["pg_version"] = pg_ver.split(",")[0]
-    print(f"[PG17 ENGINE] {db_name} | {report['pg_version']}")
+    report["pg_version_full"] = pg_ver
+    print(f"[PG17 ENGINE] {db_name} | {pg_ver}")
+
+    total_entries = sum(len(ph.get("entries", [])) for ph in manifest["after_reconciled_phases"])
+    report["total_manifest_entries"] = total_entries
+    report["replayed_files"] = []
 
     executed = 0
     for phase in manifest["after_reconciled_phases"]:
@@ -122,6 +127,7 @@ def replay_all(dsn: str, inbox_dir: Path) -> Dict[str, Any]:
                 with c.cursor() as cur:
                     cur.execute(sql_text)
                 executed += 1
+                report["replayed_files"].append(f"{executed:03d}: [{entry['repo']}] {entry['file']}")
                 print(f"  [OK {executed:03d}] [{entry['repo']:<14}] {entry['file']}")
             except Exception as exc:
                 err = f"{type(exc).__name__}: {exc}".strip()
@@ -131,6 +137,7 @@ def replay_all(dsn: str, inbox_dir: Path) -> Dict[str, Any]:
                 c.close()
 
     report["executed_count"] = executed
+    report["replay_ratio"] = f"{executed}/{total_entries}"
 
     # Run C-01..C-08 assertions via existing rehearsal module
     sys.path.insert(0, str(CORE_ROOT))
@@ -192,12 +199,65 @@ def replay_all(dsn: str, inbox_dir: Path) -> Dict[str, Any]:
             )
             rls_status = {r[0]: {"rls": r[1], "force_rls": r[2]} for r in cur.fetchall()}
 
+            cur.execute(
+                """
+                SELECT conname, pg_get_constraintdef(oid)
+                FROM pg_constraint
+                WHERE conrelid = 'public.payment_outbox_events'::regclass
+                  AND contype = 'u'
+                ORDER BY conname;
+                """
+            )
+            outbox_unique_constraints = {r[0]: r[1] for r in cur.fetchall()}
+
+            # Live transactional probe for ON CONFLICT (idempotency_key) DO NOTHING (no 42P10)
+            probe_key = "pg17-replay-probe:idempotency-key-parity"
+            cur.execute(
+                """
+                INSERT INTO public.payment_outbox_events (
+                    event_id, aggregate_id, event_type, canonical_tenant_id, order_id,
+                    provider, provider_event_id, idempotency_key, payload, status
+                ) VALUES (
+                    %s, 'ORD-PROBE-037', 'PAYMENT_SETTLED', '00000000-0000-0000-0000-00000000000a',
+                    'ORD-PROBE-037', 'XENDIT', 'prov-probe-037', %s, '{}'::jsonb, 'PENDING'
+                )
+                ON CONFLICT (idempotency_key) DO NOTHING
+                RETURNING id;
+                """,
+                (f"{probe_key}:1", probe_key),
+            )
+            first_probe = cur.fetchone()
+            cur.execute(
+                """
+                INSERT INTO public.payment_outbox_events (
+                    event_id, aggregate_id, event_type, canonical_tenant_id, order_id,
+                    provider, provider_event_id, idempotency_key, payload, status
+                ) VALUES (
+                    %s, 'ORD-PROBE-037', 'PAYMENT_SETTLED', '00000000-0000-0000-0000-00000000000a',
+                    'ORD-PROBE-037', 'XENDIT', 'prov-probe-037', %s, '{}'::jsonb, 'PENDING'
+                )
+                ON CONFLICT (idempotency_key) DO NOTHING
+                RETURNING id;
+                """,
+                (f"{probe_key}:2", probe_key),
+            )
+            second_probe = cur.fetchone()
+            c.rollback()
+            assert "uq_payment_outbox_events_idempotency_key" in outbox_unique_constraints, (
+                f"Missing uq_payment_outbox_events_idempotency_key: {outbox_unique_constraints}"
+            )
+            assert first_probe is not None and second_probe is None, (
+                f"ON CONFLICT (idempotency_key) probe failed: first={first_probe}, second={second_probe}"
+            )
+
             report["p3d_schema_audit"] = {
                 "orders_p3d_columns_present": {
                     col: orders_cols.get(col) for col in ("idempotency_key", "payment_intent_id", "last_settlement_event_id")
                 },
                 "payment_intents_columns": intents_cols,
                 "payment_outbox_events_columns_from_037": outbox_cols,
+                "payment_outbox_events_unique_constraints": outbox_unique_constraints,
+                "payment_outbox_events_on_conflict_idempotency_key_probe": "PASS (first insert succeeded, duplicate idempotency_key resolved via ON CONFLICT (idempotency_key) DO NOTHING without 42P10)",
                 "payment_outbox_events_missing_columns_expected_by_A3_dispatcher_and_provenance": missing_dispatcher_cols,
                 "rls_status": rls_status,
             }

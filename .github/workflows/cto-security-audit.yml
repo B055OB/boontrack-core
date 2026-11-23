@@ -887,6 +887,7 @@ jobs:
             tests/test_checkout_recovery_remediation.py \
             tests/test_academy_warm_launch.py \
             tests/test_payment_reconciliation.py \
+            tests/test_packet3d_remediations_negative.py \
             -v -ra --tb=short 2>&1 | tee -a /tmp/checkout_regression.log || {
             echo "## ❌ Checkout Recovery Regression Suite Failure" >> $GITHUB_STEP_SUMMARY
             echo '```' >> $GITHUB_STEP_SUMMARY

@@ -2110,7 +2110,7 @@ def commit_verified_settlement_transaction(
                         %s, %s, %s, %s::jsonb, %s::jsonb,
                         %s, 'PENDING', 'PENDING', %s, %s
                     )
-                    ON CONFLICT (event_id) DO NOTHING;
+                    ON CONFLICT (idempotency_key) DO NOTHING;
                     """,
                     (
                         late_outbox_key,
@@ -2249,7 +2249,7 @@ def commit_verified_settlement_transaction(
                     %s, %s, %s, %s::jsonb, %s::jsonb,
                     %s, 'PENDING', 'PENDING', %s, %s
                 )
-                ON CONFLICT (event_id) DO NOTHING;
+                ON CONFLICT (idempotency_key) DO NOTHING;
                 """,
                 (
                     settled_outbox_key,

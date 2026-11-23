@@ -183,9 +183,9 @@ def execute_order_settlement_transaction(
             """
             INSERT INTO payment_events (
                 provider, event_id, reference_id, event_type, payload, status, processed_at, created_at, updated_at,
-                order_id, provider_event_id, amount, raw_payload
+                order_id, provider_event_id, amount, raw_payload, tenant_id
             )
-            VALUES (%s, %s, %s, 'PAYMENT_SETTLED', %s, 'PROCESSED', %s, %s, %s, %s, %s, %s, %s)
+            VALUES (%s, %s, %s, 'PAYMENT_SETTLED', %s, 'PROCESSED', %s, %s, %s, %s, %s, %s, %s, %s)
             ON CONFLICT (provider, event_id) DO NOTHING;
             """,
             (
@@ -200,6 +200,7 @@ def execute_order_settlement_transaction(
                 str(event_id),
                 amount,
                 payload_json,
+                str(tenant_id),
             )
         )
 
@@ -208,16 +209,14 @@ def execute_order_settlement_transaction(
             """
             INSERT INTO financial_ledger (
                 order_id, tenant_id, provider, event_id, gross_amount, fee_amount, net_amount,
-                currency, transaction_type, status, metadata, created_at
-            ) VALUES (%s, %s, %s, %s, %s, %s, %s, 'IDR', 'PAYMENT_CREDIT', 'SETTLED', %s, %s);
+                currency, transaction_type, status, transaction_status, reconciliation_status, metadata, created_at
+            ) VALUES (%s, %s, %s, %s, %s, NULL, NULL, 'IDR', 'PAYMENT_CREDIT', 'SETTLED', 'SETTLED', 'PENDING_RECONCILIATION', %s, %s);
             """,
             (
                 str(external_id),
                 tenant_id,
                 provider.upper(),
                 str(event_id),
-                amount,
-                0,
                 amount,
                 payload_json,
                 now_utc,

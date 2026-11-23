@@ -1,0 +1,337 @@
+{
+  "manifest_path": "C:\\boontrack-core-p3d-integrated\\migrations\\reconciliation\\shared_db_migration_manifest.json",
+  "strict_json_valid": true,
+  "strict_json_error": null,
+  "executed_count": 110,
+  "sql_failures": [],
+  "c01_to_c08": {
+    "C-01": "PASS (PG 17 policies valid, Core 033a-033c columns/constraints/append-only verified)",
+    "C-02": "PASS (whatsapp_connections union columns, uq_whatsapp_connections_tenant_provider, Core+Inbox statuses accepted, invalid rejected)",
+    "C-03": "PASS (conversations accepted unassigned/assigned/resolved/HUMAN_PAUSED/active and rejected invalid status)",
+    "C-04": "PASS (20261030_global_auth precedes atomic_google/observability/oauth_state -> 20261112 -> 20261115 -> 20261120 -> 20261122; all 5 RPCs/triggers verified)",
+    "C-05/C-06": "PASS (all 10 base catalog tables + public.merchants with RLS=true & FORCE=true verified on clean PG 17 replay)",
+    "C-07": "PASS (113/113 tenant-scoped tables have RLS=true & FORCE=true; 0 anon/authenticated/public wildcard USING(true) policies)",
+    "C-08": "PASS (tenant_config_audit_logs FORCE RLS=true; is_jti_revoked EXECUTE public=False, anon=True, authenticated=True, service_role=True; trg_tenants_set_updated_at strictly monotonic across 5 rapid updates: 2026-11-23T03:18:57.135034+00:00 -> 2026-11-23T03:18:57.288281+00:00)"
+  },
+  "p3d_schema_audit": {
+    "orders_p3d_columns_present": {
+      "idempotency_key": [
+        "character varying",
+        "YES"
+      ],
+      "payment_intent_id": [
+        "uuid",
+        "YES"
+      ],
+      "last_settlement_event_id": [
+        "character varying",
+        "YES"
+      ]
+    },
+    "payment_intents_columns": {
+      "id": [
+        "uuid",
+        "NO"
+      ],
+      "tenant_id": [
+        "character varying",
+        "NO"
+      ],
+      "order_id": [
+        "character varying",
+        "NO"
+      ],
+      "amount": [
+        "bigint",
+        "NO"
+      ],
+      "unique_code": [
+        "integer",
+        "NO"
+      ],
+      "total_amount": [
+        "bigint",
+        "NO"
+      ],
+      "qr_string": [
+        "text",
+        "YES"
+      ],
+      "qr_image_url": [
+        "text",
+        "YES"
+      ],
+      "status": [
+        "character varying",
+        "YES"
+      ],
+      "expires_at": [
+        "timestamp with time zone",
+        "YES"
+      ],
+      "created_at": [
+        "timestamp with time zone",
+        "YES"
+      ],
+      "idempotency_key": [
+        "character varying",
+        "YES"
+      ],
+      "request_fingerprint": [
+        "character varying",
+        "YES"
+      ],
+      "initiation_state": [
+        "character varying",
+        "NO"
+      ],
+      "updated_at": [
+        "timestamp with time zone",
+        "YES"
+      ]
+    },
+    "payment_outbox_events_columns_from_037": {
+      "id": [
+        "uuid",
+        "NO"
+      ],
+      "event_id": [
+        "character varying",
+        "NO"
+      ],
+      "aggregate_id": [
+        "character varying",
+        "YES"
+      ],
+      "event_type": [
+        "character varying",
+        "NO"
+      ],
+      "payload": [
+        "jsonb",
+        "NO"
+      ],
+      "signature": [
+        "character varying",
+        "YES"
+      ],
+      "canonical_tenant_id": [
+        "character varying",
+        "YES"
+      ],
+      "order_id": [
+        "character varying",
+        "YES"
+      ],
+      "payment_intent_id": [
+        "uuid",
+        "YES"
+      ],
+      "provider": [
+        "character varying",
+        "YES"
+      ],
+      "provider_event_id": [
+        "character varying",
+        "YES"
+      ],
+      "idempotency_key": [
+        "character varying",
+        "YES"
+      ],
+      "provenance_envelope": [
+        "jsonb",
+        "YES"
+      ],
+      "status": [
+        "character varying",
+        "NO"
+      ],
+      "attempt_count": [
+        "integer",
+        "NO"
+      ],
+      "next_attempt_at": [
+        "timestamp with time zone",
+        "NO"
+      ],
+      "locked_by": [
+        "character varying",
+        "YES"
+      ],
+      "locked_at": [
+        "timestamp with time zone",
+        "YES"
+      ],
+      "last_error": [
+        "text",
+        "YES"
+      ],
+      "delivery_status": [
+        "character varying",
+        "NO"
+      ],
+      "retry_count": [
+        "integer",
+        "NO"
+      ],
+      "next_retry_at": [
+        "timestamp with time zone",
+        "NO"
+      ],
+      "delivered_at": [
+        "timestamp with time zone",
+        "YES"
+      ],
+      "created_at": [
+        "timestamp with time zone",
+        "NO"
+      ],
+      "updated_at": [
+        "timestamp with time zone",
+        "NO"
+      ]
+    },
+    "payment_outbox_events_unique_constraints": {
+      "uq_payment_outbox_events_event_id": "UNIQUE (event_id)",
+      "uq_payment_outbox_events_idempotency_key": "UNIQUE (idempotency_key)"
+    },
+    "payment_outbox_events_on_conflict_idempotency_key_probe": "PASS (first insert succeeded, duplicate idempotency_key resolved via ON CONFLICT (idempotency_key) DO NOTHING without 42P10)",
+    "payment_outbox_events_missing_columns_expected_by_A3_dispatcher_and_provenance": [],
+    "rls_status": {
+      "orders": {
+        "rls": true,
+        "force_rls": true
+      },
+      "payment_events": {
+        "rls": true,
+        "force_rls": true
+      },
+      "payment_intents": {
+        "rls": true,
+        "force_rls": true
+      },
+      "payment_outbox_events": {
+        "rls": true,
+        "force_rls": true
+      }
+    }
+  },
+  "pg_database": "boontrack_p3d_e2e",
+  "pg_version": "PostgreSQL 17.11 (Debian 17.11-1.pgdg13+2) on x86_64-pc-linux-gnu",
+  "pg_version_full": "PostgreSQL 17.11 (Debian 17.11-1.pgdg13+2) on x86_64-pc-linux-gnu, compiled by gcc (Debian 14.2.0-19) 14.2.0, 64-bit",
+  "total_manifest_entries": 110,
+  "replayed_files": [
+    "001: [reconciliation] 000_disposable_pg17_base_catalog_bootstrap.sql",
+    "002: [core] v1.0_conversation_os_tables.sql",
+    "003: [core] v1.1_assets_table.sql",
+    "004: [core] 002_create_document_jobs.sql",
+    "005: [core] 003_update_document_jobs_compliance.sql",
+    "006: [core] 004_create_gym_iot_tables.sql",
+    "007: [core] 005_create_core_payment_tables.sql",
+    "008: [core] 006_create_control_plane_tables.sql",
+    "009: [core] 007_add_affiliate_ref_and_tenant_payouts.sql",
+    "010: [core] 008_add_onboarding_mode_to_tenants.sql",
+    "011: [core] 008_whitelist_partners_bank_and_payouts.sql",
+    "012: [core] 009_create_campaign_attributions_and_seed_onlineboost.sql",
+    "013: [core] 010_local_service_v1_booking_state_engine.sql",
+    "014: [core] 011_booking_reminders_auto_scheduler.sql",
+    "015: [core] 012_reader_notifications_hybrid_callback.sql",
+    "016: [core] 013_add_screening_and_bank_details_to_affiliates.sql",
+    "017: [core] 014_create_control_plane_tenant_prospects.sql",
+    "018: [core] 015_create_cs_agents_and_update_conversations.sql",
+    "019: [core] 016_create_whatsapp_connections.sql",
+    "020: [core] 017_update_cs_agents_team_access.sql",
+    "021: [core] 018_add_activation_unique_constraints.sql",
+    "022: [core] 019_add_is_connected_to_whatsapp_connections.sql",
+    "023: [core] 020_create_waba_conversations.sql",
+    "024: [core] 021_create_outbound_messages.sql",
+    "025: [core] 022_create_inbound_webhook_events.sql",
+    "026: [core] 023_create_tenant_waba_configs.sql",
+    "027: [core] 024_create_payment_orders.sql",
+    "028: [core] 025_add_outbound_channel_lock_and_idempotency.sql",
+    "029: [core] 026_add_provider_to_conversations.sql",
+    "030: [core] 026_crm_ssot_and_orders_contact_id.sql",
+    "031: [core] 20260925_create_booking_slots_and_bot_profiles.sql",
+    "032: [reconciliation] R02_c02_reconcile_whatsapp_connections_union.sql",
+    "033: [inbox] 20260918_create_whatsapp_connections.sql",
+    "034: [reconciliation] R02_c02_reconcile_whatsapp_connections_union.sql",
+    "035: [reconciliation] R01_c01_reconcile_payment_events_pg17.sql",
+    "036: [inbox] 20260923_create_message_outbox.sql",
+    "037: [inbox] 20260923_extend_message_outbox.sql",
+    "038: [inbox] 20260924_create_tool_audit_logs.sql",
+    "039: [inbox] 20260925_create_booking_slots_and_bot_profiles.sql",
+    "040: [inbox] 20260925_create_order_items.sql",
+    "041: [inbox] 20260926_add_is_connected_to_whatsapp_connections.sql",
+    "042: [inbox] 20260926_add_metadata_to_orders.sql",
+    "043: [inbox] 20260930_add_product_alias_columns_and_sync.sql",
+    "044: [inbox] 20260930_remediate_public_rls_security.sql",
+    "045: [inbox] 20261002_add_is_archived_to_orders.sql",
+    "046: [inbox] 20261002_add_quantity_to_orders.sql",
+    "047: [inbox] 20261002_create_store_shipping_configs_and_self_pickup.sql",
+    "048: [inbox] 20261003_add_telegram_chat_id_to_tenants.sql",
+    "049: [inbox] 20261003_create_channel_bindings.sql",
+    "050: [inbox] 20261003_create_order_audit_logs.sql",
+    "051: [inbox] 20261003_create_shop_subscriptions.sql",
+    "052: [inbox] 20261003_create_telegram_group_mappings.sql",
+    "053: [inbox] 20261003_payment_evidence_and_capi_outbox.sql",
+    "054: [inbox] 20261004_add_granted_subscription_status_and_grant_type.sql",
+    "055: [inbox] 20261004_add_order_number_to_orders.sql",
+    "056: [reconciliation] R05_pg17_compat_credit_ledger_tables.sql",
+    "057: [inbox] 20261004_create_payment_observations_and_outbox.sql",
+    "058: [inbox] 20261004_create_shared_cart_engine.sql",
+    "059: [inbox] 20261008_create_creator_and_studio_tables.sql",
+    "060: [inbox] 20261008_create_store_reseller_system.sql",
+    "061: [inbox] 20261009_create_studio_credit_audit_logs.sql",
+    "062: [inbox] 20261009_create_studio_intelligence_tables.sql",
+    "063: [inbox] 20261009_create_studio_workspaces.sql",
+    "064: [inbox] 20261009_seed_indonesian_hook_patterns.sql",
+    "065: [inbox] 20261010_add_product_type_to_affiliate_commissions.sql",
+    "066: [inbox] 20261010_seed_onlineboost_digital_products.sql",
+    "067: [inbox] 20261012_add_notified_at_to_orders.sql",
+    "068: [inbox] 20261012_create_atomic_bot_control_rpc.sql",
+    "069: [inbox] 20261016_create_general_ledger.sql",
+    "070: [inbox] 20261016_create_outbox_events.sql",
+    "071: [inbox] 20261016_fix_bot_control_state_sync.sql",
+    "072: [inbox] 20261016_harden_security_definer_functions.sql",
+    "073: [inbox] 20261017_add_ads_performance_tier_enum.sql",
+    "074: [inbox] 20261017_add_bot_control_columns_to_conversations.sql",
+    "075: [reconciliation] R03_c03_harmonize_conversations_status.sql",
+    "076: [inbox] 20261018_create_creator_tips.sql",
+    "077: [inbox] 20261018_create_reseller_partnerships.sql",
+    "078: [inbox] 20261018_reseller_foundation_p0.sql",
+    "079: [inbox] 20261020_add_phone_and_whatsapp_to_tenants.sql",
+    "080: [inbox] 20261020_create_tenant_booking_slots.sql",
+    "081: [inbox] 20261020_create_tenant_drivers.sql",
+    "082: [inbox] 20261021_create_atomic_studio_refund_rpc.sql",
+    "083: [inbox] 20261021_harden_atomic_reservation_rpc.sql",
+    "084: [inbox] 20261021_harden_atomic_studio_credits.sql",
+    "085: [inbox] 20261021_tenant_scoped_rpc_security.sql",
+    "086: [inbox] 20261030_global_auth_studio_and_creator.sql",
+    "087: [inbox] 20261030_atomic_google_identity_linking.sql",
+    "088: [inbox] 20261030_profile_trigger_observability.sql",
+    "089: [inbox] 20261030_shared_oauth_state_replay_protection.sql",
+    "090: [inbox] 20261105_update_shabu_ajhi_qris_payload.sql",
+    "091: [inbox] 20261105_update_shabu_ajhi_shipping_and_qris.sql",
+    "092: [inbox] 20261112_create_tenant_config_audit_logs.sql",
+    "093: [inbox] 20261115_distributed_jti_revocation.sql",
+    "094: [inbox] 20261120_monotonic_tenants_updated_at_trigger.sql",
+    "095: [inbox] 20261122_revoke_public_is_jti_revoked.sql",
+    "096: [inbox] 20261123_orders_idempotency_and_projection.sql",
+    "097: [core] 027_harden_rls_tenants_commerce_products_carts_attributions.sql",
+    "098: [core] 028_harden_rls_affiliates_commissions_cart_items.sql",
+    "099: [core] 029_fix_commerce_products_public_rls.sql",
+    "100: [core] 030_harden_rls_all_remaining_tenant_tables.sql",
+    "101: [reconciliation] R06_pg17_compat_031_b2_remediation.sql",
+    "102: [core] 032_create_payment_replay_nonces.sql",
+    "103: [core] 033a_stage3_payment_settlement_expand_phase.sql",
+    "104: [core] 033b_stage3_payment_settlement_migrate_validate_phase.sql",
+    "105: [core] 033c_stage3_payment_settlement_contract_phase.sql",
+    "106: [core] 034_create_trial_quota_reservations.sql",
+    "107: [core] 035_durable_checkout_sessions.sql",
+    "108: [core] 036_create_merchants_registry.sql",
+    "109: [core] 037_core_payment_intent_idempotency_and_settlement_outbox.sql",
+    "110: [reconciliation] R04_c07_c08_post_rls_and_privilege_hardening.sql"
+  ],
+  "replay_ratio": "110/110"
+}

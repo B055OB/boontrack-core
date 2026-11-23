@@ -635,13 +635,21 @@ class PaymentIntentLifecycleService:
         conn: Any,
         signature: Optional[str] = None,
     ) -> None:
-        """Appends an event to Core-owned public.payment_outbox_events table."""
+        """Appends an event to Core-owned public.payment_outbox_events table.
+        Strictly fail-closed: any persistence failure propagates to abort and
+        roll back the enclosing transaction.
+        """
         if not conn:
             return
         event_id = f"evt_{uuid.uuid4().hex}"
         tenant_id = payload.get("tenant_id")
         order_id = payload.get("order_id") or str(aggregate_id)
-        idempotency_key = payload.get("idempotency_key")
+        raw_idemp = payload.get("idempotency_key")
+        outbox_idempotency_key = (
+            f"{str(raw_idemp).strip()}:{event_type}:{event_id}"
+            if raw_idemp and str(raw_idemp).strip()
+            else event_id
+        )
         intent_id_candidate = payload.get("intent_id")
         payment_intent_id = None
         if intent_id_candidate:
@@ -650,32 +658,30 @@ class PaymentIntentLifecycleService:
             except Exception:
                 payment_intent_id = None
 
-        try:
-            with conn.cursor() as cur:
-                cur.execute(
-                    """
-                    INSERT INTO public.payment_outbox_events (
-                        event_id, aggregate_id, event_type, payload, signature, delivery_status,
-                        canonical_tenant_id, order_id, payment_intent_id, idempotency_key, status
-                    ) VALUES (
-                        %s, %s, %s, %s, %s, 'PENDING',
-                        %s, %s, %s, %s, 'PENDING'
-                    );
-                    """,
-                    (
-                        event_id,
-                        str(aggregate_id),
-                        str(event_type),
-                        json.dumps(payload, default=str),
-                        signature,
-                        tenant_id,
-                        order_id,
-                        payment_intent_id,
-                        idempotency_key,
-                    ),
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO public.payment_outbox_events (
+                    event_id, aggregate_id, event_type, payload, signature, delivery_status,
+                    canonical_tenant_id, order_id, payment_intent_id, idempotency_key, status
+                ) VALUES (
+                    %s, %s, %s, %s, %s, 'PENDING',
+                    %s, %s, %s, %s, 'PENDING'
                 )
-        except Exception as e:
-            logger.warning(f"[PaymentIntentLifecycle] Outbox write note: {e}")
+                ON CONFLICT (idempotency_key) DO NOTHING;
+                """,
+                (
+                    event_id,
+                    str(aggregate_id),
+                    str(event_type),
+                    json.dumps(payload, default=str),
+                    signature,
+                    tenant_id,
+                    order_id,
+                    payment_intent_id,
+                    outbox_idempotency_key,
+                ),
+            )
 
 
 payment_intent_lifecycle_service = PaymentIntentLifecycleService()

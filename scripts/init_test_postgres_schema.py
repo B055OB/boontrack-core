@@ -356,11 +356,15 @@ def init_test_schema():
       gross_amount NUMERIC,
       amount NUMERIC(14, 2),
       paid_at TIMESTAMPTZ,
+      affiliate_code VARCHAR(64),
+      manager_id VARCHAR(128),
       metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
       fulfillment_metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
       created_at TIMESTAMPTZ DEFAULT NOW(),
       updated_at TIMESTAMPTZ DEFAULT NOW()
     );
+    ALTER TABLE public.orders ADD COLUMN IF NOT EXISTS affiliate_code VARCHAR(64);
+    ALTER TABLE public.orders ADD COLUMN IF NOT EXISTS manager_id VARCHAR(128);
     ALTER TABLE public.orders ENABLE ROW LEVEL SECURITY;
     ALTER TABLE public.orders FORCE ROW LEVEL SECURITY;
     DROP POLICY IF EXISTS p1_tenant_isolation_orders ON public.orders;
@@ -1050,37 +1054,116 @@ def init_test_schema():
         OR NULLIF(current_setting('app.current_tenant_id', true), '') IS NULL
       );
 
-    -- 3b. PAYMENT OUTBOX EVENTS TABLE & STRICT RLS
+    -- 3b. PAYMENT INTENTS & PAYMENT OUTBOX EVENTS TABLES (100% PARITY WITH MIGRATION 037)
+    CREATE TABLE IF NOT EXISTS public.payment_intents (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      tenant_id VARCHAR(100) NOT NULL,
+      order_id VARCHAR(150) NOT NULL,
+      amount BIGINT NOT NULL,
+      unique_code INT NOT NULL DEFAULT 0,
+      total_amount BIGINT NOT NULL,
+      qr_string TEXT,
+      qr_image_url TEXT,
+      status VARCHAR(50) DEFAULT 'PENDING',
+      expires_at TIMESTAMPTZ,
+      idempotency_key VARCHAR(255),
+      request_fingerprint VARCHAR(128),
+      initiation_state VARCHAR(64) NOT NULL DEFAULT 'INITIATING',
+      created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+      CONSTRAINT uq_payment_intent_tenant_order UNIQUE (tenant_id, order_id),
+      CONSTRAINT uq_payment_intents_idempotency_key UNIQUE (idempotency_key),
+      CONSTRAINT chk_payment_intents_initiation_state
+        CHECK (initiation_state IN (
+          'INITIATING', 'ACTIVE', 'PROVIDER_UNKNOWN', 'PAID',
+          'EXPIRED', 'CANCELLED', 'QUARANTINED_LATE_SETTLEMENT'
+        ))
+    );
+    ALTER TABLE public.payment_intents ENABLE ROW LEVEL SECURITY;
+    ALTER TABLE public.payment_intents FORCE ROW LEVEL SECURITY;
+    DROP POLICY IF EXISTS tenant_isolation_payment_intents ON public.payment_intents;
+    CREATE POLICY tenant_isolation_payment_intents ON public.payment_intents
+      AS PERMISSIVE FOR ALL TO authenticated
+      USING (
+        tenant_id = public.current_app_tenant_slug()
+        OR tenant_id = public.try_cast_uuid(current_setting('app.current_tenant_id', true))::text
+      )
+      WITH CHECK (
+        tenant_id = public.current_app_tenant_slug()
+        OR tenant_id = public.try_cast_uuid(current_setting('app.current_tenant_id', true))::text
+      );
+    DROP POLICY IF EXISTS service_role_all_payment_intents ON public.payment_intents;
+    CREATE POLICY service_role_all_payment_intents ON public.payment_intents
+      AS PERMISSIVE FOR ALL TO service_role
+      USING (
+        tenant_id = public.current_app_tenant_slug()
+        OR tenant_id = public.try_cast_uuid(current_setting('app.current_tenant_id', true))::text
+        OR NULLIF(current_setting('app.current_tenant_id', true), '') IS NULL
+      )
+      WITH CHECK (
+        tenant_id = public.current_app_tenant_slug()
+        OR tenant_id = public.try_cast_uuid(current_setting('app.current_tenant_id', true))::text
+        OR NULLIF(current_setting('app.current_tenant_id', true), '') IS NULL
+      );
+
     CREATE TABLE IF NOT EXISTS public.payment_outbox_events (
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-      event_id VARCHAR(128) DEFAULT gen_random_uuid()::text,
+      event_id VARCHAR(128) NOT NULL DEFAULT gen_random_uuid()::text,
       aggregate_id VARCHAR(150),
       event_type VARCHAR(64) NOT NULL,
-      canonical_tenant_id VARCHAR(100),
-      order_id VARCHAR(128),
-      payment_intent_id UUID,
-      provider VARCHAR(32),
-      provider_event_id VARCHAR(128),
-      idempotency_key VARCHAR(255) UNIQUE,
       payload JSONB NOT NULL DEFAULT '{}'::jsonb,
-      provenance_envelope JSONB,
       signature VARCHAR(255),
-      delivery_status VARCHAR(32) NOT NULL DEFAULT 'PENDING',
+      canonical_tenant_id VARCHAR(100),
+      order_id VARCHAR(150),
+      payment_intent_id UUID,
+      provider VARCHAR(64),
+      provider_event_id VARCHAR(150),
+      idempotency_key VARCHAR(255),
+      provenance_envelope JSONB DEFAULT '{}'::jsonb,
       status VARCHAR(32) NOT NULL DEFAULT 'PENDING',
-      retry_count INT NOT NULL DEFAULT 0,
       attempt_count INT NOT NULL DEFAULT 0,
-      next_retry_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
       next_attempt_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      delivered_at TIMESTAMPTZ,
-      locked_by VARCHAR(128),
+      locked_by VARCHAR(100),
       locked_at TIMESTAMPTZ,
       last_error TEXT,
+      delivery_status VARCHAR(32) NOT NULL DEFAULT 'PENDING',
+      retry_count INT NOT NULL DEFAULT 0,
+      next_retry_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      delivered_at TIMESTAMPTZ,
       created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
       updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      CONSTRAINT uq_payment_outbox_events_event_id UNIQUE (event_id)
+      CONSTRAINT uq_payment_outbox_events_event_id UNIQUE (event_id),
+      CONSTRAINT uq_payment_outbox_events_idempotency_key UNIQUE (idempotency_key),
+      CONSTRAINT chk_payment_outbox_delivery_status
+        CHECK (delivery_status IN ('PENDING', 'DELIVERED', 'FAILED', 'DEAD_LETTER'))
     );
-    ALTER TABLE public.payment_outbox_events ALTER COLUMN event_id DROP NOT NULL;
-    ALTER TABLE public.payment_outbox_events ALTER COLUMN event_id SET DEFAULT gen_random_uuid()::text;
+    ALTER TABLE public.payment_outbox_events
+      ALTER COLUMN event_id SET DEFAULT gen_random_uuid()::text;
+    DO $$
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'uq_payment_outbox_events_idempotency_key'
+          AND conrelid = 'public.payment_outbox_events'::regclass
+      ) THEN
+        ALTER TABLE public.payment_outbox_events
+          ADD CONSTRAINT uq_payment_outbox_events_idempotency_key UNIQUE (idempotency_key);
+      END IF;
+    END $$;
+    CREATE INDEX IF NOT EXISTS idx_payment_outbox_status_attempt
+      ON public.payment_outbox_events (status, next_attempt_at);
+    CREATE INDEX IF NOT EXISTS idx_payment_outbox_order_id
+      ON public.payment_outbox_events (order_id);
+    CREATE INDEX IF NOT EXISTS idx_payment_outbox_canonical_tenant
+      ON public.payment_outbox_events (canonical_tenant_id);
+    CREATE INDEX IF NOT EXISTS idx_payment_outbox_payment_intent
+      ON public.payment_outbox_events (payment_intent_id);
+    CREATE INDEX IF NOT EXISTS idx_payment_outbox_status_retry
+      ON public.payment_outbox_events (delivery_status, next_retry_at);
+    CREATE INDEX IF NOT EXISTS idx_payment_outbox_aggregate
+      ON public.payment_outbox_events (aggregate_id);
+    CREATE INDEX IF NOT EXISTS idx_payment_outbox_event_type
+      ON public.payment_outbox_events (event_type);
     ALTER TABLE public.payment_outbox_events ENABLE ROW LEVEL SECURITY;
     ALTER TABLE public.payment_outbox_events FORCE ROW LEVEL SECURITY;
     DROP POLICY IF EXISTS service_role_all_payment_outbox_events ON public.payment_outbox_events;
