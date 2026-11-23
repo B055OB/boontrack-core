@@ -2107,6 +2107,8 @@ def commit_verified_settlement_transaction(
                             updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
                             CONSTRAINT uq_payment_outbox_events_event_id UNIQUE (event_id)
                         );
+                        ALTER TABLE payment_outbox_events ENABLE ROW LEVEL SECURITY;
+                        ALTER TABLE payment_outbox_events FORCE ROW LEVEL SECURITY;
                         """
                     )
                     late_outbox_key = f"{provider}:{event_id}:late"
@@ -2328,6 +2330,8 @@ def commit_verified_settlement_transaction(
                         updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
                         CONSTRAINT uq_payment_outbox_events_event_id UNIQUE (event_id)
                     );
+                    ALTER TABLE payment_outbox_events ENABLE ROW LEVEL SECURITY;
+                    ALTER TABLE payment_outbox_events FORCE ROW LEVEL SECURITY;
                     """
                 )
                 settled_outbox_key = f"{provider}:{event_id}:settled"

@@ -1050,6 +1050,53 @@ def init_test_schema():
         OR NULLIF(current_setting('app.current_tenant_id', true), '') IS NULL
       );
 
+    -- 3b. PAYMENT OUTBOX EVENTS TABLE & STRICT RLS
+    CREATE TABLE IF NOT EXISTS public.payment_outbox_events (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      event_id VARCHAR(128) NOT NULL,
+      aggregate_id VARCHAR(150),
+      event_type VARCHAR(64) NOT NULL,
+      canonical_tenant_id VARCHAR(100),
+      order_id VARCHAR(128),
+      payment_intent_id UUID,
+      provider VARCHAR(32),
+      provider_event_id VARCHAR(128),
+      idempotency_key VARCHAR(255) UNIQUE,
+      payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+      provenance_envelope JSONB,
+      signature VARCHAR(255),
+      delivery_status VARCHAR(32) NOT NULL DEFAULT 'PENDING',
+      status VARCHAR(32) NOT NULL DEFAULT 'PENDING',
+      retry_count INT NOT NULL DEFAULT 0,
+      attempt_count INT NOT NULL DEFAULT 0,
+      next_retry_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      next_attempt_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      delivered_at TIMESTAMPTZ,
+      locked_by VARCHAR(128),
+      locked_at TIMESTAMPTZ,
+      last_error TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+    ALTER TABLE public.payment_outbox_events ENABLE ROW LEVEL SECURITY;
+    ALTER TABLE public.payment_outbox_events FORCE ROW LEVEL SECURITY;
+    DROP POLICY IF EXISTS service_role_all_payment_outbox_events ON public.payment_outbox_events;
+    CREATE POLICY service_role_all_payment_outbox_events ON public.payment_outbox_events
+      AS PERMISSIVE FOR ALL TO service_role
+      USING (true)
+      WITH CHECK (true);
+    DROP POLICY IF EXISTS tenant_isolation_payment_outbox_events ON public.payment_outbox_events;
+    CREATE POLICY tenant_isolation_payment_outbox_events ON public.payment_outbox_events
+      AS PERMISSIVE FOR ALL TO authenticated
+      USING (
+        canonical_tenant_id = public.current_app_tenant_slug()
+        OR canonical_tenant_id = public.try_cast_uuid(current_setting('app.current_tenant_id', true))::text
+      )
+      WITH CHECK (
+        canonical_tenant_id = public.current_app_tenant_slug()
+        OR canonical_tenant_id = public.try_cast_uuid(current_setting('app.current_tenant_id', true))::text
+      );
+
     -- 4. REQUIRED VIEWS WITH SECURITY_INVOKER = TRUE
     DROP VIEW IF EXISTS public.v_affiliate_ledger CASCADE;
     DROP VIEW IF EXISTS public.affiliate_ledger CASCADE;

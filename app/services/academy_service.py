@@ -2442,6 +2442,8 @@ def _execute_atomic_settlement_tx(
                     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
                     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
                 );
+                ALTER TABLE payment_outbox_events ENABLE ROW LEVEL SECURITY;
+                ALTER TABLE payment_outbox_events FORCE ROW LEVEL SECURITY;
                 """
             )
             acad_outbox_key = f"{provider_upper}:{event_id}:settled"

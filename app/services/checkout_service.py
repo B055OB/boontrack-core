@@ -298,6 +298,8 @@ def execute_order_settlement_transaction(
                     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
                     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
                 );
+                ALTER TABLE payment_outbox_events ENABLE ROW LEVEL SECURITY;
+                ALTER TABLE payment_outbox_events FORCE ROW LEVEL SECURITY;
                 """
             )
             outbox_key = f"{provider.upper()}:{event_id}:settled"
