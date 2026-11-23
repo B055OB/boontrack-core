@@ -2280,32 +2280,32 @@ def commit_verified_settlement_transaction(
                 "fulfillment_triggered": False,
                 "capi_triggered": False,
             }
-        # Step D: Single-Writer Architecture — Atomic insert into payment_outbox_events (ZERO UPDATE orders on real DB)
-        if is_mock_conn:
-            cur.execute(
-                """
-                UPDATE orders
-                SET status = 'PAID',
-                    payment_status = 'PAID',
-                    order_status = 'PAID',
-                    fulfillment_status = 'PENDING_STAGE4_VERIFICATION',
-                    paid_at = COALESCE(orders.paid_at, %s),
-                    updated_at = %s
-                WHERE id = %s
-                  AND tenant_id = %s
-                  AND COALESCE(gross_amount, amount, 0) = %s
-                  AND COALESCE(UPPER(TRIM(status)), '') IN ('PENDING', 'WAITING_PAYMENT', 'UNPAID', '');
-                """,
-                (now_utc, now_utc, order_id, canonical_tenant_id, verified_amount),
+        # Step D: Atomic order status update & durable Stage 4 outbox record
+        cur.execute(
+            """
+            UPDATE orders
+            SET status = 'PAID',
+                payment_status = 'PAID',
+                order_status = 'PAID',
+                fulfillment_status = 'PENDING_STAGE4_VERIFICATION',
+                paid_at = COALESCE(orders.paid_at, %s),
+                updated_at = %s
+            WHERE id = %s
+              AND tenant_id = %s
+              AND COALESCE(gross_amount, amount, 0) = %s
+              AND COALESCE(UPPER(TRIM(status)), '') IN ('PENDING', 'WAITING_PAYMENT', 'UNPAID', '');
+            """,
+            (now_utc, now_utc, order_id, canonical_tenant_id, verified_amount),
+        )
+        if getattr(cur, "rowcount", 0) != 1:
+            _safe_rollback_conn(conn)
+            raise SettlementProvenanceError(
+                f"Atomic order status transition failed for order '{order_id}'.",
+                error_code="ORDER_STATE_TRANSITION_FAILED",
+                http_status=409,
             )
-            if getattr(cur, "rowcount", 0) != 1:
-                _safe_rollback_conn(conn)
-                raise SettlementProvenanceError(
-                    f"Atomic order status transition failed for order '{order_id}'.",
-                    error_code="ORDER_STATE_TRANSITION_FAILED",
-                    http_status=409,
-                )
-        else:
+
+        if not is_mock_conn:
             savepoint_name = f"sp_outbox_{uuid.uuid4().hex[:8]}"
             savepoint_active = False
             try:
