@@ -25,7 +25,11 @@ from app.services.academy_service import (
     ACADEMY_INVOICE_TTL_MINUTES,
     ACADEMY_BROADCAST_TEMPLATE_NAME,
     ACADEMY_BROADCAST_NASKAH,
+    ACADEMY_CHECKOUT_DISABLED_ERROR_CODE,
+    ACADEMY_CHECKOUT_DISABLED_MESSAGE,
+    AcademyDirectCheckoutDisabledError,
     TenantContextViolation,
+    is_academy_direct_checkout_enabled,
     generate_academy_qris_invoice,
     get_academy_invoice,
     academy_bot,
@@ -121,6 +125,18 @@ async def create_academy_invoice(
       APP_MASTER_KEY ditolak sesuai P0-A).
     - Menerbitkan signed checkout_session_token yang mengikat order_id + canonical_tenant_id dengan TTL 15 menit.
     """
+    # Phase 1 Scope Lockdown: Academy direct checkout disabled across ALL environments
+    # (CTO Decision & PACKET_3D_STEP2A_PHASE1_SCOPE_VERIFICATION.md §2.2)
+    # Default-deny: Disabled unless ENABLE_ACADEMY_DIRECT_CHECKOUT is explicitly "true"
+    if not is_academy_direct_checkout_enabled():
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={
+                "error_code": ACADEMY_CHECKOUT_DISABLED_ERROR_CODE,
+                "message": ACADEMY_CHECKOUT_DISABLED_MESSAGE,
+            },
+        )
+
     expected_secret = os.getenv("BOONTRACK_INTERNAL_HMAC_SECRET")
     master_key = os.getenv("APP_MASTER_KEY")
 
@@ -165,6 +181,15 @@ async def create_academy_invoice(
             sku_id=payload.sku_id,
             is_internal_authorized=is_internal,
             session_token_manager=_CHECKOUT_TOKEN_MANAGER,
+        )
+    except AcademyDirectCheckoutDisabledError as disabled_err:
+        logger.warning(f"[AcademyInvoice] Direct checkout disabled: {disabled_err}")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={
+                "error_code": disabled_err.error_code,
+                "message": disabled_err.message,
+            },
         )
     except TenantContextViolation as tc_err:
         logger.warning(f"[AcademyInvoice] Tenant context rejected: {tc_err}")

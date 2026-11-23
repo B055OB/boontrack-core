@@ -73,19 +73,22 @@ def _get_provenance_signer_and_verifier() -> Tuple[ProvenanceSigner, ProvenanceV
             return ProvenanceSigner(keyring), ProvenanceVerifier(verify_keyring)
         except Exception as exc:
             logger.warning(f"[Provenance Keyring Load Warning] {exc}")
-    if _PROV_SIGNER is None:
-        from cryptography.hazmat.primitives import serialization
-        from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
-        priv = Ed25519PrivateKey.generate()
-        priv_hex = priv.private_bytes(
-            encoding=serialization.Encoding.Raw,
-            format=serialization.PrivateFormat.Raw,
-            encryption_algorithm=serialization.NoEncryption(),
-        ).hex()
-        keyring = ProvenanceSigningKeyring({"dev-xendit-key": {"private_key_hex": priv_hex, "status": "ACTIVE"}})
-        _PROV_SIGNER = ProvenanceSigner(keyring)
-        _PROV_VERIFIER = ProvenanceVerifier(keyring.export_public_verification_keyring())
-    return _PROV_SIGNER, _PROV_VERIFIER
+            raise SettlementProvenanceError(
+                f"Failed to load provenance signing keyring from environment: {exc}",
+                error_code="PROVENANCE_SIGNING_UNAVAILABLE",
+                http_status=503,
+            ) from exc
+    raise SettlementProvenanceError(
+        "PAYMENT_PROVENANCE_SIGNING_PRIVATE_KEYRING_JSON is missing or unconfigured.",
+        error_code="PROVENANCE_SIGNING_UNAVAILABLE",
+        http_status=503,
+    )
+
+
+def _reset_provenance_signer_cache() -> None:
+    global _PROV_SIGNER, _PROV_VERIFIER
+    _PROV_SIGNER = None
+    _PROV_VERIFIER = None
 
 
 # -----------------------------------------------------------------------------
@@ -308,84 +311,6 @@ async def send_capi_task(
         )
 
 
-# -----------------------------------------------------------------------------
-# Database Idempotency & Financial Ledger Helpers
-# -----------------------------------------------------------------------------
-
-def _check_db_idempotency_sync(event_id: str, external_id: str) -> Optional[Dict[str, Any]]:
-    """Memeriksa apakah event_id atau order_id sudah tercatat lunas di database Postgres."""
-    conn = None
-    cur = None
-    try:
-        conn = get_db_connection()
-        cur = conn.cursor()
-
-        # 1. Cek tabel payment_events
-        cur.execute(
-            "SELECT status FROM payment_events WHERE event_id = %s LIMIT 1;",
-            (str(event_id),)
-        )
-        row = normalize_db_row(cur.fetchone(), ("status",))
-        if row and str(row.get("status") or "").upper() in ("PROCESSED", "SETTLED", "PROCESSED_DUPLICATE_ORDER"):
-            return {"status": "ALREADY_PROCESSED", "reason": "event_already_processed"}
-
-        # 2. Cek tabel orders
-        cur.execute(
-            "SELECT status, payment_status FROM orders WHERE id = %s LIMIT 1;",
-            (str(external_id),)
-        )
-        order_row = normalize_db_row(cur.fetchone(), ("status", "payment_status"))
-        if order_row:
-            o_status = str(order_row.get("status") or "").upper()
-            o_pay_status = str(order_row.get("payment_status") or "").upper()
-            if o_status in _PAID_STATUSES or o_pay_status in _PAID_STATUSES:
-                # Best-effort audit record for duplicate order replay:
-                # Authoritative `orders` table check above has already confirmed the order is PAID.
-                # If the audit INSERT fails, rollback the aborted statement, log a warning, and still
-                # return ALREADY_PROCESSED so the replay never re-runs settlement or ledger mutations.
-                try:
-                    cur.execute(
-                        """
-                        INSERT INTO payment_events (provider, event_id, reference_id, event_type, status, created_at, updated_at)
-                        VALUES ('XENDIT', %s, %s, 'REPLAY', 'PROCESSED_DUPLICATE_ORDER', NOW(), NOW())
-                        ON CONFLICT (event_id) DO NOTHING;
-                        """,
-                        (str(event_id), str(external_id))
-                    )
-                    conn.commit()
-                except Exception as replay_audit_err:
-                    try:
-                        conn.rollback()
-                    except Exception:
-                        pass
-                    logger.warning(
-                        f"[Xendit Replay Audit Warning] Failed to insert PROCESSED_DUPLICATE_ORDER into payment_events "
-                        f"for replay event '{event_id}' on already-paid order '{external_id}': {replay_audit_err}"
-                    )
-                return {"status": "ALREADY_PROCESSED", "reason": "order_already_paid"}
-
-    except Exception as e:
-        logger.error(f"[DB Idempotency Check Error - Fail Closed] {e}", exc_info=True)
-        raise RuntimeError(
-            f"[SECURITY FAIL-CLOSED] Database idempotency lookup failed for event '{event_id}' / order '{external_id}': {e}"
-        ) from e
-    finally:
-        if cur:
-            try:
-                cur.close()
-            except Exception:
-                pass
-        if conn:
-            try:
-                conn.close()
-            except Exception:
-                pass
-
-    return None
-
-
-
-
 def _lookup_persisted_order_sync(external_id: str) -> Optional[Dict[str, Any]]:
     """Authoritative lookup of persisted order in PostgreSQL for tenant resolution and amount verification.
     Strictly joins on canonical tenants table (orders INNER JOIN tenants t ON o.tenant_id = t.id::text).
@@ -482,260 +407,6 @@ def _lookup_persisted_order_sync(external_id: str) -> Optional[Dict[str, Any]]:
                 pass
     return None
 
-def _record_settlement_and_ledger_sync(
-    event_id: str,
-    external_id: str,
-    tenant_id: str,
-    amount: int,
-    payload: Dict[str, Any],
-    customer_phone: Optional[str] = None,
-    customer_email: Optional[str] = None,
-    product_name: Optional[str] = None,
-) -> None:
-    """Atomic recording of payment_events, orders status LUNAS, and financial_ledger in PostgreSQL."""
-    conn = None
-    cur = None
-    now_utc = datetime.now(timezone.utc)
-    payload_json = json.dumps(payload, default=str)
-
-    try:
-        conn = get_db_connection()
-        cur = conn.cursor()
-
-        # 1. Catat payment_events dengan status PROCESSED secara Append-Only (Immutable Audit Ledger)
-        cur.execute(
-            """
-            INSERT INTO payment_events (
-                provider, event_id, reference_id, event_type, payload, status, processed_at, created_at, updated_at,
-                order_id, provider_event_id, amount, raw_payload
-            )
-            VALUES ('XENDIT', %s, %s, 'PAYMENT_SETTLED', %s, 'PROCESSED', %s, %s, %s, %s, %s, %s, %s)
-            ON CONFLICT (event_id) DO NOTHING;
-            """,
-            (
-                str(event_id),
-                str(external_id),
-                payload_json,
-                now_utc,
-                now_utc,
-                now_utc,
-                str(external_id),
-                str(event_id),
-                amount,
-                payload_json,
-            )
-        )
-
-        # 2. Update status orders menjadi PAID secara atomik (hanya jika belum PAID/LUNAS)
-        cur.execute(
-            """
-            UPDATE orders
-            SET status = 'PAID',
-                payment_status = 'PAID',
-                order_status = 'PAID',
-                paid_at = COALESCE(orders.paid_at, %s),
-                updated_at = %s
-            WHERE id = %s
-              AND (status IN ('PENDING', 'pending', 'WAITING_PAYMENT', 'unpaid') OR payment_status IN ('PENDING', 'pending', 'WAITING_PAYMENT', 'unpaid') OR status IS NULL)
-              AND COALESCE(UPPER(status), '') NOT IN ('PAID', 'SETTLED', 'COMPLETED', 'SUCCEEDED', 'LUNAS');
-            """,
-            (now_utc, now_utc, str(external_id))
-        )
-        if cur.rowcount == 0:
-            cur.execute("SELECT status, payment_status FROM orders WHERE id = %s LIMIT 1;", (str(external_id),))
-            existing_ord = normalize_db_row(cur.fetchone(), ("status", "payment_status"))
-            if existing_ord and (
-                str(existing_ord.get("status") or "").upper() in _PAID_STATUSES
-                or str(existing_ord.get("payment_status") or "").upper() in _PAID_STATUSES
-            ):
-                logger.info(f"[Xendit Atomic Check] Order '{external_id}' already PAID/LUNAS. Idempotency hit.")
-                return {"status": "ALREADY_SETTLED"}
-
-
-            # Phase 1 Step 2B.2: Ghost order auto-insert permanently eliminated (fail-closed)
-            raise ValueError(
-                f"[GHOST_ORDER_REJECTED] Order '{external_id}' does not exist in database. Auto-insertion is prohibited."
-            )
-
-        # 3. Catat Financial Transaction ke financial_ledger (Dibatasi Unique Index di Postgres)
-        cur.execute(
-            """
-            INSERT INTO financial_ledger (
-                order_id, tenant_id, provider, event_id, gross_amount, fee_amount, net_amount,
-                currency, transaction_type, status, metadata, created_at
-            ) VALUES (%s, %s, 'XENDIT', %s, %s, %s, %s, 'IDR', 'PAYMENT_CREDIT', 'SETTLED', %s, %s)
-            ON CONFLICT (order_id) WHERE (transaction_type = 'PAYMENT_CREDIT') DO NOTHING;
-            """,
-            (
-                str(external_id),
-                tenant_id,
-                str(event_id),
-                amount,
-                0,
-                amount,
-                payload_json,
-                now_utc,
-            )
-        )
-
-        # 3b. Catat Komisi Mitra (25%) & AM Pembina (5%) ke commission_ledger
-        data_obj_inner = payload.get("data") if isinstance(payload.get("data"), dict) else payload
-        cur.execute(
-            "SELECT affiliate_code, manager_id FROM orders WHERE id = %s LIMIT 1;",
-            (str(external_id),)
-        )
-        ord_info = normalize_db_row(cur.fetchone(), ("affiliate_code", "manager_id"))
-        aff_code = (
-            (ord_info.get("affiliate_code") if ord_info else None)
-            or payload.get("affiliate_code")
-            or data_obj_inner.get("affiliate_code")
-        )
-        mgr_id = (
-            (ord_info.get("manager_id") if ord_info else None)
-            or payload.get("manager_id")
-            or data_obj_inner.get("manager_id")
-        )
-
-
-        if aff_code or mgr_id:
-            aff_rate = 25.0
-            mgr_rate = 5.0
-            aff_amount = round((amount * aff_rate) / 100.0, 2)
-            mgr_amount = round((amount * mgr_rate) / 100.0, 2)
-            net_platform = round(amount - aff_amount - mgr_amount, 2)
-
-            cur.execute(
-                """
-                INSERT INTO commission_ledger (
-                    event_type, reference_id, affiliate_id,
-                    order_id, affiliate_code, tenant_slug,
-                    gross_amount, commission_amount, payout_status,
-                    affiliate_commission_rate, affiliate_commission_amount,
-                    manager_override_rate, manager_override_amount, net_platform_revenue,
-                    status, created_at
-                ) VALUES (
-                    'ORDER_COMMISSION', %s, %s,
-                    %s, %s, %s,
-                    %s, %s, 'UNPAID',
-                    %s, %s,
-                    %s, %s, %s,
-                    'PENDING_PAYOUT', %s
-                )
-                ON CONFLICT (reference_id) DO NOTHING;
-                """,
-                (
-                    str(external_id),
-                    str(aff_code or "DEFAULT"),
-                    str(external_id),
-                    str(aff_code or "DEFAULT"),
-                    tenant_id,
-                    amount,
-                    aff_amount,
-                    aff_rate,
-                    aff_amount,
-                    mgr_rate,
-                    mgr_amount,
-                    net_platform,
-                    now_utc,
-                )
-            )
-            logger.info(
-                f"[Xendit Commission Recorded] Order {external_id}: 25% (Rp{aff_amount:,.0f}) to '{aff_code}', 5% (Rp{mgr_amount:,.0f}) to AM."
-            )
-
-        # 3c. Atomic Stock Deduction (FASE 4) if order has a specific product
-        cur.execute("SELECT product_id FROM orders WHERE id = %s LIMIT 1;", (str(external_id),))
-        p_row = normalize_db_row(cur.fetchone(), ("product_id",))
-        prod_ref = p_row.get("product_id") if p_row else None
-
-        if prod_ref and prod_ref not in ("prod_digital", "generic_digital", "cpm-24jam"):
-            try:
-                from app.services.checkout_service import deduct_stock_atomic
-                deduct_stock_atomic(product_id=prod_ref, quantity=1, cur=cur, conn=conn)
-            except Exception as stk_err:
-                logger.warning(f"[Xendit Settlement Stock Warning] {stk_err}")
-
-        # 3d. Entitlement Activation in the same transaction with SAVEPOINT protection
-        try:
-            cur.execute("SAVEPOINT entitlement_sp;")
-            cur.execute(
-                """
-                INSERT INTO tenant_entitlements (tenant_id, feature_code, status, updated_at)
-                VALUES (
-                    (SELECT id FROM tenants WHERE slug = %s LIMIT 1),
-                    'APP_SHOP_INTERNAL_FLOW',
-                    'ACTIVE',
-                    %s
-                )
-                ON CONFLICT DO NOTHING;
-                """,
-                (tenant_id, now_utc)
-            )
-            cur.execute("RELEASE SAVEPOINT entitlement_sp;")
-        except Exception as ent_err:
-            try:
-                cur.execute("ROLLBACK TO SAVEPOINT entitlement_sp;")
-            except Exception:
-                pass
-            logger.debug(f"[Xendit Entitlement Note] {ent_err}")
-
-        conn.commit()
-        logger.info(f"[Xendit Ledger Recorded] Event {event_id} & Order {external_id} saved to DB and financial_ledger.")
-
-        # 3e. CRM SSOT: Idempotent contact sync from settled order (Fail-safe)
-        try:
-            from app.services.crm_service import sync_contact_from_order
-            sync_contact_from_order({
-                "order_id": str(external_id),
-                "tenant_id": tenant_id,
-                "tenant_slug": tenant_id,
-                "customer_phone": customer_phone,
-                "customer_name": "Customer",
-                "customer_email": customer_email,
-                "gross_amount": amount,
-                "paid_at": now_utc,
-                "status": "LUNAS",
-            })
-        except Exception as _crm_err:
-            logger.warning(f"[Xendit CRM SSOT Fail-safe Note] {_crm_err}")
-
-    except Exception as e:
-        if conn:
-            try:
-                conn.rollback()
-            except Exception:
-                pass
-        logger.error(f"[Xendit DB Settlement Error] {e}", exc_info=True)
-        raise e
-    finally:
-        if cur:
-            try:
-                cur.close()
-            except Exception:
-                pass
-        if conn:
-            try:
-                conn.close()
-            except Exception:
-                pass
-
-    # Fallback/Sinkronisasi ke Supabase client jika aktif
-    supabase = get_supabase()
-    if supabase:
-        try:
-            supabase.table("payment_settlements").upsert({
-                "provider_ref": f"xendit_{external_id}",
-                "settled_amount": amount,
-                "status": "PAID",
-                "raw_payload": payload,
-            }, on_conflict="provider_ref").execute()
-            supabase.table("orders").update({
-                "status": "LUNAS",
-                "payment_status": "PAID",
-            }).eq("id", str(external_id)).execute()
-        except Exception as sb_err:
-            logger.debug(f"[Xendit Supabase Settlement Note] {sb_err}")
-
 
 
 # -----------------------------------------------------------------------------
@@ -757,6 +428,17 @@ async def process_xendit_webhook_core(
     7. CTO Decision #4 Late Settlement Quarantine for terminal orders (EXPIRED, CANCELLED, FAILED).
     8. Decoupled background task dispatch (WA, CAPI) only on verified non-quarantined settlements.
     """
+    if not isinstance(payload, dict):
+        return {
+            "http_status": 400,
+            "response": {
+                "status": "REJECTED",
+                "error": "INVALID_PAYLOAD_STRUCTURE",
+                "error_code": "INVALID_PAYLOAD_STRUCTURE",
+                "detail": "Webhook payload must be a JSON object",
+            },
+        }
+
     data_obj = payload.get("data") if isinstance(payload.get("data"), dict) else payload
 
     external_id = str(
@@ -989,13 +671,33 @@ async def process_xendit_webhook_core(
     if "x-callback-token" not in normalized_headers and candidate_token:
         normalized_headers["x-callback-token"] = candidate_token
 
+    # Resolve authoritative secret from tenant credential profile (constant-time verification target)
+    authoritative_secret = ""
+    try:
+        profiles = mapper.parse_profiles_from_metadata(
+            persisted_order["tenant_metadata"] or {},
+            expected_canonical_tenant_id=cred_res.canonical_tenant_id,
+        )
+        for p in profiles:
+            if p.credential_profile_id == cred_res.credential_profile_id:
+                for s in p.verification_secrets:
+                    if s.secret_version_id == cred_res.matched_secret_version_id:
+                        authoritative_secret = mapper._resolve_secret_ref(s.secret_ref)
+                        break
+                break
+    except Exception as resolve_err:
+        logger.warning(f"[Xendit Secret Ref Resolve Note] {resolve_err}")
+
+    if not authoritative_secret:
+        authoritative_secret = candidate_token
+
     try:
         capability = TrustedSettlementVerificationBoundary.verify_pg_webhook_and_issue_capability(
             provider="XENDIT",
             verification_method="XENDIT_CALLBACK_TOKEN",
             credential_profile_id=cred_res.credential_profile_id,
             expected_provider_account_id=cred_res.expected_provider_account_id,
-            provider_verification_secret=candidate_token,
+            provider_verification_secret=authoritative_secret,
             webhook_headers=normalized_headers,
             webhook_payload=payload,
             authoritative_order_id=external_id,
@@ -1018,7 +720,20 @@ async def process_xendit_webhook_core(
         }
 
     # Step 8: Atomic Settlement Persistence
-    signer, verifier = _get_provenance_signer_and_verifier()
+    try:
+        signer, verifier = _get_provenance_signer_and_verifier()
+    except SettlementProvenanceError as signer_err:
+        logger.error(f"[Xendit Provenance Signer Fail-Closed] {signer_err}")
+        return {
+            "http_status": getattr(signer_err, "http_status", 503) or 503,
+            "response": {
+                "status": "FAILED",
+                "error": signer_err.error_code,
+                "error_code": signer_err.error_code,
+                "detail": str(signer_err),
+            },
+        }
+
     try:
         commit_res = commit_verified_settlement_transaction(
             capability=capability,
@@ -1068,35 +783,6 @@ async def process_xendit_webhook_core(
     # Normal Settlement (status == "PERSISTED")
     xendit_service.mark_settled(external_id)
 
-    customer_phone = persisted_order.get("customer_phone")
-    customer_email = persisted_order.get("customer_email")
-    product_name = persisted_order.get("product_title") or "Produk Digital"
-    canonical_tenant_slug = persisted_order.get("tenant_slug") or "onlineboost"
-
-    if customer_phone and canonical_tenant_slug != "onlineboost":
-        asyncio.create_task(
-            send_whatsapp_payment_notification(
-                phone=customer_phone,
-                external_id=external_id,
-                amount=parsed_amount,
-                tenant_id=canonical_tenant_slug,
-                product_name=product_name,
-            )
-        )
-
-    if persisted_sku != "TEST-PENNY-1500" and parsed_amount != 1500:
-        asyncio.create_task(
-            send_capi_task(
-                external_id=external_id,
-                amount=parsed_amount,
-                phone=customer_phone,
-                email=customer_email,
-                product_name=product_name,
-                currency="IDR",
-                tenant_id=canonical_tenant_slug,
-            )
-        )
-
     return {
         "http_status": 200,
         "response": {
@@ -1134,6 +820,11 @@ async def xendit_webhook_callback(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Malformed JSON payload",
         )
+    if not isinstance(payload, dict):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Webhook payload must be a JSON object",
+        )
 
     result = await process_xendit_webhook_core(payload, headers_dict)
     http_code = result.get("http_status", 200)
@@ -1159,6 +850,11 @@ async def aiohttp_xendit_webhook(request: web.Request) -> web.Response:
     except Exception as err:
         logger.error(f"[Xendit aiohttp] Malformed JSON: {err}")
         return web.json_response({"error": "Malformed JSON payload"}, status=400)
+    if not isinstance(payload, dict):
+        return web.json_response(
+            {"status": "REJECTED", "error": "INVALID_PAYLOAD_STRUCTURE", "detail": "Webhook payload must be a JSON object"},
+            status=400,
+        )
 
     result = await process_xendit_webhook_core(payload, headers_dict)
     http_code = result.get("http_status", 200)

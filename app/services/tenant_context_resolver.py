@@ -209,6 +209,29 @@ def normalize_tenant_kind(raw_val: Any, raw_meta: Optional[Dict[str, Any]] = Non
     return "SAAS"
 
 
+def sanitize_tenant_metadata(meta: Dict[str, Any]) -> Dict[str, Any]:
+    """Ensures metadata never stores or logs plaintext provider secrets.
+    Any provider secret must be a safe reference (e.g. env://, vault://, secret://, kms://).
+    """
+    if not isinstance(meta, dict):
+        return {}
+    clean_meta = {}
+    for k, v in meta.items():
+        if isinstance(v, dict):
+            clean_meta[k] = sanitize_tenant_metadata(v)
+        elif isinstance(v, str) and k.lower() in (
+            "secret_key", "xendit_secret_key", "server_key", "client_secret",
+            "api_key", "xendit_callback_token"
+        ):
+            if not (v.startswith("env://") or v.startswith("vault://") or v.startswith("secret://") or v.startswith("kms://")):
+                logger.warning(f"[SECURITY] Plaintext secret stripped from tenant metadata key '{k}'.")
+                continue
+            clean_meta[k] = v
+        else:
+            clean_meta[k] = v
+    return clean_meta
+
+
 def build_context_from_dict(row: Dict[str, Any]) -> TenantRuntimeContext:
     """Membangun objek TenantRuntimeContext murni dari record database Supabase."""
     tenant_id = str(row.get("id") or "").strip()
@@ -217,6 +240,7 @@ def build_context_from_dict(row: Dict[str, Any]) -> TenantRuntimeContext:
     meta = row.get("metadata") or {}
     if not isinstance(meta, dict):
         meta = {}
+    meta = sanitize_tenant_metadata(meta)
 
     # Utamakan tenant_slug 'boon' dan tenant_name 'BoonTrack Official Shop' untuk official shop
     if slug in ("52967979-4760-4cea-b686-cdbdb389c0e1", "app_shop_v1", "app-shop-v1", "app_shop", "app-shop", "boontrack-app-shop", "boontrack_app_shop") or tenant_id == "52967979-4760-4cea-b686-cdbdb389c0e1":
@@ -471,6 +495,15 @@ class TenantContextResolver:
                     "waba_phone_number_id": "1419090974617162",
                     "phone": "6288226098088",
                     "display_phone_number": "+6288226098088",
+                    "payment_config": {
+                        "rail": "NATIVE_PG",
+                        "provider": "XENDIT",
+                        "channel": "DYNAMIC_QRIS",
+                        "api_credentials": {
+                            "secret_ref": "env://XENDIT_SECRET_KEY",
+                            "callback_token_ref": "env://XENDIT_CALLBACK_TOKEN",
+                        },
+                    },
                 }
             }
 
@@ -770,6 +803,15 @@ class TenantContextResolver:
                     "waba_phone_number_id": "1419090974617162",
                     "phone": "6288226098088",
                     "display_phone_number": "+6288226098088",
+                    "payment_config": {
+                        "rail": "NATIVE_PG",
+                        "provider": "XENDIT",
+                        "channel": "DYNAMIC_QRIS",
+                        "api_credentials": {
+                            "secret_ref": "env://XENDIT_SECRET_KEY",
+                            "callback_token_ref": "env://XENDIT_CALLBACK_TOKEN",
+                        },
+                    },
                 }
             }
 

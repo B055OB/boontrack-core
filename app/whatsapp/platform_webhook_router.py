@@ -412,8 +412,19 @@ class PlatformWebhookRouter:
         # JALUR 2.4: BoonTrack Academy Warm Launch Alumni State Machine (State 0 & 1)
         # =====================================================================
         try:
-            from app.services.academy_service import academy_bot, is_academy_trigger_message
-            if is_academy_trigger_message(clean_text) or academy_bot.is_in_active_flow(sender_clean):
+            from app.services.academy_service import (
+                AcademyDirectCheckoutDisabledError,
+                academy_bot,
+                build_academy_checkout_disabled_response,
+                is_academy_direct_checkout_enabled,
+                is_academy_direct_checkout_intent,
+                is_academy_trigger_message,
+            )
+            if (
+                is_academy_trigger_message(clean_text)
+                or academy_bot.is_in_active_flow(sender_clean)
+                or is_academy_direct_checkout_intent(clean_text, sender_phone=sender_clean, raw_msg=raw_msg)
+            ):
                 target_tenant = "boontrack-platform"
                 try:
                     from app.services.tenant_context_resolver import tenant_context_resolver
@@ -423,15 +434,74 @@ class PlatformWebhookRouter:
                 except Exception:
                     pass
 
+                # Platform Ingress Default-Deny Gate (Phase 1):
+                # Never allow Academy direct payment/invoice/QRIS/order generation through PlatformWebhookRouter
+                # when ENABLE_ACADEMY_DIRECT_CHECKOUT is not explicitly "true".
+                if not is_academy_direct_checkout_enabled() and is_academy_direct_checkout_intent(
+                    clean_text,
+                    sender_phone=sender_clean,
+                    tenant_id=target_tenant,
+                    raw_msg=raw_msg,
+                ):
+                    _log(
+                        "AcademyCheckoutGuard",
+                        f"Blocked Academy direct checkout intent on PlatformWebhookRouter ({target_tenant}).",
+                    )
+                    disabled_res = build_academy_checkout_disabled_response(
+                        tenant_id=target_tenant,
+                        channel="PLATFORM_WEBHOOK_ROUTER",
+                        purpose="PLATFORM_TRANSACTIONAL",
+                    )
+                    try:
+                        await send_whatsapp_text(
+                            to_phone=sender_clean,
+                            text=disabled_res["reply"],
+                            tenant_id=target_tenant,
+                            phone_number_id=phone_number_id,
+                        )
+                    except Exception as _disp_err:
+                        _log("AcademyCheckoutGuard.DispatchError", str(_disp_err))
+                    if trace:
+                        trace.early_return = True
+                        trace.response_status = 200
+                        trace.response_payload = disabled_res
+                    return disabled_res
+
                 academy_res = None
                 if is_academy_trigger_message(clean_text, tenant_id=target_tenant) or academy_bot.is_in_active_flow(sender_clean, tenant_id=target_tenant):
-                    academy_res = await academy_bot.process_inbound(
-                    sender_phone=sender_clean,
-                    incoming_text=clean_text,
-                    contact_name="Pelanggan",
-                    phone_number_id=phone_number_id,
-                    tenant_id=target_tenant,
-                )
+                    try:
+                        academy_res = await academy_bot.process_inbound(
+                            sender_phone=sender_clean,
+                            incoming_text=clean_text,
+                            contact_name="Pelanggan",
+                            phone_number_id=phone_number_id,
+                            tenant_id=target_tenant,
+                            raw_msg=raw_msg,
+                        )
+                    except AcademyDirectCheckoutDisabledError:
+                        _log(
+                            "AcademyCheckoutGuard",
+                            f"Caught AcademyDirectCheckoutDisabledError on PlatformWebhookRouter ({target_tenant}).",
+                        )
+                        disabled_res = build_academy_checkout_disabled_response(
+                            tenant_id=target_tenant,
+                            channel="PLATFORM_WEBHOOK_ROUTER",
+                            purpose="PLATFORM_TRANSACTIONAL",
+                        )
+                        try:
+                            await send_whatsapp_text(
+                                to_phone=sender_clean,
+                                text=disabled_res["reply"],
+                                tenant_id=target_tenant,
+                                phone_number_id=phone_number_id,
+                            )
+                        except Exception as _disp_err:
+                            _log("AcademyCheckoutGuard.DispatchError", str(_disp_err))
+                        if trace:
+                            trace.early_return = True
+                            trace.response_status = 200
+                            trace.response_payload = disabled_res
+                        return disabled_res
                 if academy_res and academy_res.get("handled"):
                     _log("AcademyBot", f"Handled by Academy State Machine ({target_tenant}): State {academy_res.get('state')}")
                     if trace:

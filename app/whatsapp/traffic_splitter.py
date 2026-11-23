@@ -1891,6 +1891,49 @@ class TenantWebhookRouter:
             return res
 
         # =====================================================================
+        # 1.40. PHASE 1 ACADEMY DIRECT CHECKOUT INGRESS GUARD (TENANT ROUTER)
+        # Blocks Academy direct invoice/QRIS/order generation on BOTH onlineboost
+        # and non-onlineboost tenants unless ENABLE_ACADEMY_DIRECT_CHECKOUT="true".
+        # =====================================================================
+        try:
+            from app.services.academy_service import (
+                AcademyDirectCheckoutDisabledError,
+                build_academy_checkout_disabled_response,
+                is_academy_direct_checkout_enabled,
+                is_academy_direct_checkout_intent,
+            )
+            if not is_academy_direct_checkout_enabled() and is_academy_direct_checkout_intent(
+                clean_text,
+                sender_phone=sender_phone,
+                tenant_id=tenant_slug,
+                raw_msg=raw_msg,
+            ):
+                trace.log_step(
+                    "TenantAcademyCheckoutGuard",
+                    f"Blocked Academy direct checkout intent on TenantWebhookRouter (tenant='{tenant_slug}')",
+                )
+                disabled_res = build_academy_checkout_disabled_response(
+                    tenant_id=tenant_slug,
+                    channel="TENANT_WEBHOOK_ROUTER",
+                    purpose="TENANT_SALES",
+                )
+                try:
+                    await send_whatsapp_text(
+                        to_phone=sender_phone,
+                        text=disabled_res["reply"],
+                        tenant_id=tenant_slug,
+                        phone_number_id=phone_number_id,
+                    )
+                except Exception as _disp_err:
+                    logger.warning(f"[TenantAcademyCheckoutGuard] WA disabled reply note: {_disp_err}")
+                trace.early_return = True
+                trace.response_status = 200
+                trace.response_payload = disabled_res
+                return disabled_res
+        except Exception as _guard_err:
+            logger.error(f"[TENANT_ACADEMY_CHECKOUT_GUARD_ERROR] {_guard_err}", exc_info=True)
+
+        # =====================================================================
         # 1.45. WHATSAPP FLOWS SUBMISSION (nfm_reply) DIRECT ORCHESTRATION
         # =====================================================================
         is_flow_reply = (
@@ -1911,10 +1954,11 @@ class TenantWebhookRouter:
                 )
                 if ctwa_res:
                     res = {
-                        "status": "success" if ctwa_res.get("success", True) else "rejected",
+                        "status": ctwa_res.get("status") or ("success" if ctwa_res.get("success", True) else "rejected"),
                         "purpose": "TENANT_SALES",
                         "tenant": "onlineboost",
                         "action": ctwa_res.get("action"),
+                        "error_code": ctwa_res.get("error_code"),
                         "reply": ctwa_res.get("reply"),
                         "order_id": ctwa_res.get("order_id"),
                         "total_amount": ctwa_res.get("total_amount"),
@@ -1930,16 +1974,28 @@ class TenantWebhookRouter:
         # 1.5. BOONTRACK ACADEMY: WARM LAUNCH ALUMNI STATE MACHINE (STATE 0 & 1)
         # =====================================================================
         try:
-            from app.services.academy_service import academy_bot, is_academy_trigger_message
+            from app.services.academy_service import (
+                AcademyDirectCheckoutDisabledError,
+                academy_bot,
+                build_academy_checkout_disabled_response,
+                is_academy_trigger_message,
+            )
             if is_academy_trigger_message(clean_text, tenant_id=tenant_slug) or academy_bot.is_in_active_flow(sender_phone, tenant_id=tenant_slug):
-                academy_res = await academy_bot.process_inbound(
-                    sender_phone=sender_phone,
-                    incoming_text=clean_text,
-                    contact_name=contact_name,
-                    phone_number_id=phone_number_id,
-                    tenant_id=tenant_slug,
-                    raw_msg=raw_msg,
-                )
+                try:
+                    academy_res = await academy_bot.process_inbound(
+                        sender_phone=sender_phone,
+                        incoming_text=clean_text,
+                        contact_name=contact_name,
+                        phone_number_id=phone_number_id,
+                        tenant_id=tenant_slug,
+                        raw_msg=raw_msg,
+                    )
+                except AcademyDirectCheckoutDisabledError:
+                    academy_res = build_academy_checkout_disabled_response(
+                        tenant_id=tenant_slug,
+                        channel="TENANT_WEBHOOK_ROUTER",
+                        purpose="TENANT_SALES",
+                    )
                 if academy_res and academy_res.get("handled"):
                     trace.log_step("TenantAcademyBot", f"Handled by Academy State Machine: State {academy_res.get('state')}")
                     trace.early_return = True
@@ -1968,10 +2024,11 @@ class TenantWebhookRouter:
                         f"Handled by OnlineBoost CTWA Engine (Action: {ctwa_res.get('action')})"
                     )
                     res = {
-                        "status": "success",
+                        "status": ctwa_res.get("status") or "success",
                         "purpose": "TENANT_SALES",
                         "tenant": "onlineboost",
                         "action": ctwa_res.get("action"),
+                        "error_code": ctwa_res.get("error_code"),
                         "reply": ctwa_res.get("reply"),
                         "order_id": ctwa_res.get("order_id"),
                         "total_amount": ctwa_res.get("total_amount"),
