@@ -274,11 +274,15 @@ def execute_order_settlement_transaction(
             )
 
         # 3. Single-Writer Settlement: insert into payment_outbox_events (ZERO direct UPDATE orders)
+        outbox_key = f"{provider.upper()}:{event_id}:settled"
         try:
+            cur.execute("SAVEPOINT checkout_outbox_sp;")
             cur.execute(
                 """
                 CREATE TABLE IF NOT EXISTS payment_outbox_events (
                     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                    event_id VARCHAR(128) DEFAULT gen_random_uuid()::text,
+                    aggregate_id VARCHAR(150),
                     event_type VARCHAR(64) NOT NULL,
                     canonical_tenant_id VARCHAR(100) NOT NULL,
                     order_id VARCHAR(128) NOT NULL,
@@ -302,19 +306,20 @@ def execute_order_settlement_transaction(
                 ALTER TABLE payment_outbox_events FORCE ROW LEVEL SECURITY;
                 """
             )
-            outbox_key = f"{provider.upper()}:{event_id}:settled"
             cur.execute(
                 """
                 INSERT INTO payment_outbox_events (
-                    event_type, canonical_tenant_id, order_id, provider, provider_event_id,
+                    event_id, aggregate_id, event_type, canonical_tenant_id, order_id, provider, provider_event_id,
                     idempotency_key, payload, status, created_at, updated_at
                 ) VALUES (
-                    'PAYMENT_SETTLED', %s, %s, %s, %s,
+                    %s, %s, 'PAYMENT_SETTLED', %s, %s, %s, %s,
                     %s, %s::jsonb, 'PENDING', %s, %s
                 )
                 ON CONFLICT (idempotency_key) DO NOTHING;
                 """,
                 (
+                    outbox_key,
+                    str(external_id),
                     tenant_id,
                     str(external_id),
                     provider.upper(),
@@ -325,7 +330,12 @@ def execute_order_settlement_transaction(
                     now_utc,
                 ),
             )
+            cur.execute("RELEASE SAVEPOINT checkout_outbox_sp;")
         except Exception as ob_err:
+            try:
+                cur.execute("ROLLBACK TO SAVEPOINT checkout_outbox_sp;")
+            except Exception:
+                pass
             logger.warning(f"[Checkout Outbox Note] {ob_err}")
 
         # 4. Atomic Stock Deduction (FASE 4)

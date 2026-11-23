@@ -2418,11 +2418,15 @@ def _execute_atomic_settlement_tx(
         )
 
         # Single-Writer Architecture: Enqueue outbox projection alongside core settlement
+        acad_outbox_key = f"{provider_upper}:{event_id}:settled"
         try:
+            cur.execute("SAVEPOINT academy_outbox_sp;")
             cur.execute(
                 """
                 CREATE TABLE IF NOT EXISTS payment_outbox_events (
                     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                    event_id VARCHAR(128) DEFAULT gen_random_uuid()::text,
+                    aggregate_id VARCHAR(150),
                     event_type VARCHAR(64) NOT NULL,
                     canonical_tenant_id VARCHAR(100) NOT NULL,
                     order_id VARCHAR(128) NOT NULL,
@@ -2446,19 +2450,20 @@ def _execute_atomic_settlement_tx(
                 ALTER TABLE payment_outbox_events FORCE ROW LEVEL SECURITY;
                 """
             )
-            acad_outbox_key = f"{provider_upper}:{event_id}:settled"
             cur.execute(
                 """
                 INSERT INTO payment_outbox_events (
-                    event_type, canonical_tenant_id, order_id, provider, provider_event_id,
+                    event_id, aggregate_id, event_type, canonical_tenant_id, order_id, provider, provider_event_id,
                     idempotency_key, payload, status, created_at, updated_at
                 ) VALUES (
-                    'PAYMENT_SETTLED', %s, %s, %s, %s,
+                    %s, %s, 'PAYMENT_SETTLED', %s, %s, %s, %s,
                     %s, %s::jsonb, 'PENDING', %s, %s
                 )
                 ON CONFLICT (idempotency_key) DO NOTHING;
                 """,
                 (
+                    acad_outbox_key,
+                    order_id,
                     canonical_db_tenant_id,
                     order_id,
                     provider_upper,
@@ -2469,7 +2474,12 @@ def _execute_atomic_settlement_tx(
                     now_utc,
                 ),
             )
+            cur.execute("RELEASE SAVEPOINT academy_outbox_sp;")
         except Exception as ob_e:
+            try:
+                cur.execute("ROLLBACK TO SAVEPOINT academy_outbox_sp;")
+            except Exception:
+                pass
             logger.warning(f"[Academy Outbox Note] {ob_e}")
 
         if db_session_state is not None:

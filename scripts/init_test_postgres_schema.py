@@ -1053,7 +1053,7 @@ def init_test_schema():
     -- 3b. PAYMENT OUTBOX EVENTS TABLE & STRICT RLS
     CREATE TABLE IF NOT EXISTS public.payment_outbox_events (
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-      event_id VARCHAR(128) NOT NULL,
+      event_id VARCHAR(128) DEFAULT gen_random_uuid()::text,
       aggregate_id VARCHAR(150),
       event_type VARCHAR(64) NOT NULL,
       canonical_tenant_id VARCHAR(100),
@@ -1076,8 +1076,11 @@ def init_test_schema():
       locked_at TIMESTAMPTZ,
       last_error TEXT,
       created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      CONSTRAINT uq_payment_outbox_events_event_id UNIQUE (event_id)
     );
+    ALTER TABLE public.payment_outbox_events ALTER COLUMN event_id DROP NOT NULL;
+    ALTER TABLE public.payment_outbox_events ALTER COLUMN event_id SET DEFAULT gen_random_uuid()::text;
     ALTER TABLE public.payment_outbox_events ENABLE ROW LEVEL SECURITY;
     ALTER TABLE public.payment_outbox_events FORCE ROW LEVEL SECURITY;
     DROP POLICY IF EXISTS service_role_all_payment_outbox_events ON public.payment_outbox_events;
