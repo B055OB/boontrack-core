@@ -49,8 +49,13 @@ from app.services.academy_service import (
 
 
 @pytest.fixture(autouse=True)
-def clean_academy_state():
-    """Reset state internal sebelum tiap test dijalankan."""
+def clean_academy_state(monkeypatch):
+    """Reset state internal sebelum tiap test dijalankan.
+    Legacy Warm Launch unit tests explicitly opt in to ENABLE_ACADEMY_DIRECT_CHECKOUT='true'
+    to exercise the legacy checkout path while default-deny isolation is verified in
+    tests/test_packet3d_remediations_negative.py.
+    """
+    monkeypatch.setenv("ENABLE_ACADEMY_DIRECT_CHECKOUT", "true")
     _ACADEMY_SESSIONS.clear()
     _ACADEMY_INVOICES.clear()
     _SETTLED_ORDERS.clear()

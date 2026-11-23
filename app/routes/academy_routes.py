@@ -25,7 +25,11 @@ from app.services.academy_service import (
     ACADEMY_INVOICE_TTL_MINUTES,
     ACADEMY_BROADCAST_TEMPLATE_NAME,
     ACADEMY_BROADCAST_NASKAH,
+    ACADEMY_CHECKOUT_DISABLED_ERROR_CODE,
+    ACADEMY_CHECKOUT_DISABLED_MESSAGE,
+    AcademyDirectCheckoutDisabledError,
     TenantContextViolation,
+    is_academy_direct_checkout_enabled,
     generate_academy_qris_invoice,
     get_academy_invoice,
     academy_bot,
@@ -124,12 +128,12 @@ async def create_academy_invoice(
     # Phase 1 Scope Lockdown: Academy direct checkout disabled across ALL environments
     # (CTO Decision & PACKET_3D_STEP2A_PHASE1_SCOPE_VERIFICATION.md §2.2)
     # Default-deny: Disabled unless ENABLE_ACADEMY_DIRECT_CHECKOUT is explicitly "true"
-    if os.getenv("ENABLE_ACADEMY_DIRECT_CHECKOUT", "").strip().lower() != "true":
+    if not is_academy_direct_checkout_enabled():
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail={
-                "error_code": "ACADEMY_CHECKOUT_DISABLED_PHASE1",
-                "message": "Academy direct checkout is disabled in Phase 1.",
+                "error_code": ACADEMY_CHECKOUT_DISABLED_ERROR_CODE,
+                "message": ACADEMY_CHECKOUT_DISABLED_MESSAGE,
             },
         )
 
@@ -177,6 +181,15 @@ async def create_academy_invoice(
             sku_id=payload.sku_id,
             is_internal_authorized=is_internal,
             session_token_manager=_CHECKOUT_TOKEN_MANAGER,
+        )
+    except AcademyDirectCheckoutDisabledError as disabled_err:
+        logger.warning(f"[AcademyInvoice] Direct checkout disabled: {disabled_err}")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={
+                "error_code": disabled_err.error_code,
+                "message": disabled_err.message,
+            },
         )
     except TenantContextViolation as tc_err:
         logger.warning(f"[AcademyInvoice] Tenant context rejected: {tc_err}")

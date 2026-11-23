@@ -51,6 +51,164 @@ class TenantContextViolation(PermissionError):
     """Raised when cross-tenant data access is attempted."""
     pass
 
+ACADEMY_CHECKOUT_DISABLED_ERROR_CODE: str = "ACADEMY_CHECKOUT_DISABLED_PHASE1"
+ACADEMY_CHECKOUT_DISABLED_MESSAGE: str = "Academy direct checkout is disabled in Phase 1."
+ACADEMY_CHECKOUT_DISABLED_WA_REPLY: str = (
+    "Terima kasih atas minat Anda! Saat ini checkout langsung dan penerbitan invoice/QRIS "
+    "BoonTrack Academy belum diaktifkan pada Phase 1 (ACADEMY_CHECKOUT_DISABLED_PHASE1). "
+    "Tidak ada pesanan atau tagihan yang dibuat. Tim kami akan menginformasikan begitu pendaftaran resmi dibuka."
+)
+
+
+class AcademyDirectCheckoutDisabledError(PermissionError):
+    """Raised fail-closed when Academy direct checkout/invoice generation is disabled in Phase 1."""
+
+    def __init__(
+        self,
+        message: str = ACADEMY_CHECKOUT_DISABLED_MESSAGE,
+        error_code: str = ACADEMY_CHECKOUT_DISABLED_ERROR_CODE,
+    ):
+        super().__init__(message)
+        self.error_code = error_code
+        self.message = message
+
+
+def is_academy_direct_checkout_enabled() -> bool:
+    """
+    Phase 1 Scope Lockdown (strict default-deny across ALL environments, tenants, and channels).
+    Returns True ONLY when ENABLE_ACADEMY_DIRECT_CHECKOUT is explicitly set to 'true' (case-insensitive).
+    Independent of APP_ENV, ONLINEBOOST_PAYMENT_STRICT_HOLD, PILOT_INTERNAL_WHITELIST, and tenant_id.
+    """
+    return os.getenv("ENABLE_ACADEMY_DIRECT_CHECKOUT", "").strip().lower() == "true"
+
+
+def require_academy_direct_checkout_enabled(context: str = "academy_direct_checkout") -> None:
+    """Fail-closed service-boundary guard blocking Academy direct invoice/QRIS/order mutations."""
+    if not is_academy_direct_checkout_enabled():
+        logger.warning(
+            "[AcademyScopeLockdown] Blocked %s (%s).",
+            context,
+            ACADEMY_CHECKOUT_DISABLED_ERROR_CODE,
+        )
+        raise AcademyDirectCheckoutDisabledError()
+
+
+DIRECT_QRIS_INTENT_KEYWORDS = (
+    "bayar via qris",
+    "siapkan qris",
+    "siapkan_qris",
+    "bayar qris",
+    "metode rahasia",
+    "minta qris",
+    "kirim qris",
+    "transfer qris",
+    "qris 249",
+    "bayar lewat qris",
+    "mau transfer qris",
+    "minta qrisnya",
+    "kirim qrisnya",
+    "minta qris dong",
+)
+
+
+def build_academy_checkout_disabled_response(
+    *,
+    tenant_id: str = "onlineboost",
+    channel: str = "WHATSAPP",
+    campaign: Optional[str] = None,
+    customer_name: Optional[str] = None,
+    customer_email: Optional[str] = None,
+    purpose: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Builds a safe non-payment/disabled WhatsApp response without creating any order/invoice/QRIS."""
+    res: Dict[str, Any] = {
+        "handled": True,
+        "status": "disabled",
+        "action": ACADEMY_CHECKOUT_DISABLED_ERROR_CODE,
+        "error_code": ACADEMY_CHECKOUT_DISABLED_ERROR_CODE,
+        "channel": channel,
+        "order_id": None,
+        "total_amount": None,
+        "qr_string": "",
+        "qr_image_url": "",
+        "invoice_url": "",
+        "reply": ACADEMY_CHECKOUT_DISABLED_WA_REPLY,
+        "tenant_id": tenant_id,
+        "tenant": tenant_id,
+        "early_return": True,
+    }
+    if campaign:
+        res["campaign"] = campaign
+    if customer_name:
+        res["customer_name"] = customer_name
+    if customer_email:
+        res["customer_email"] = customer_email
+    if purpose:
+        res["purpose"] = purpose
+    return res
+
+
+def is_academy_direct_checkout_intent(
+    incoming_text: str,
+    sender_phone: Optional[str] = None,
+    tenant_id: Optional[str] = None,
+    raw_msg: Optional[Dict[str, Any]] = None,
+) -> bool:
+    """
+    Detects inbound WhatsApp messages that would trigger Academy direct invoice,
+    QRIS, or order+checkout session creation across any tenant (onlineboost or non-onlineboost).
+    Preserves non-payment conversational/qualification/opt-out flows and unrelated merchant traffic.
+    """
+    clean_text = str(incoming_text or "").strip()
+    clean_lower = clean_text.lower()
+    clean_tid = str(tenant_id or "").strip().lower()
+
+    # 1. Storefront Direct confirmation trigger (Route C -> immediate invoice creation)
+    if clean_text and TRIGGER_PATTERN_STOREFRONT.search(clean_text):
+        return True
+
+    # 2. Direct QRIS / fast-path payment intent keywords
+    if clean_lower and any(kw in clean_lower for kw in DIRECT_QRIS_INTENT_KEYWORDS):
+        if clean_tid in ACADEMY_ALLOWED_TENANTS or not clean_tid or any(
+            marker in clean_lower
+            for marker in ("academy", "ctwa", "batch 1", "onlineboost", "249", "alumni", "metode rahasia")
+        ):
+            return True
+
+    # 3. WhatsApp Flow nfm_reply submission on Academy/OnlineBoost tenants
+    is_flow_reply = (
+        isinstance(raw_msg, dict)
+        and raw_msg.get("type") == "interactive"
+        and (raw_msg.get("interactive") or {}).get("type") == "nfm_reply"
+    )
+    if is_flow_reply and clean_tid in ACADEMY_ALLOWED_TENANTS:
+        return True
+
+    # 4. Active Academy STATE_1_AWAITING_EMAIL session receiving email or confirmation
+    if sender_phone:
+        clean_phone = normalize_phone_number(sender_phone) or sender_phone
+        session = _ACADEMY_SESSIONS.get(clean_phone)
+        if session and session.get("state") == STATE_1_AWAITING_EMAIL:
+            sess_tid = str(session.get("tenant_id") or "").strip().lower()
+            tenant_matches = (not clean_tid) or (not sess_tid) or (sess_tid == clean_tid)
+            if tenant_matches:
+                has_email = bool(re.search(r"[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+", clean_text))
+                has_confirm = bool(
+                    session.get("email")
+                    and re.search(r"\b(ok|ya|iya|siap|lanjut|benar|betul|konfirmasi|setuju)\b", clean_lower)
+                )
+                if has_email or has_confirm:
+                    return True
+
+    # 5. OnlineBoost CTWA gatekeeper fast-track / email lead-to-payment submission
+    if clean_tid == "onlineboost" and clean_text:
+        if re.search(r"Halo Admin, saya atas nama .+? \(.+?\) sudah daftar kelas", clean_text, re.IGNORECASE):
+            return True
+        if re.search(r"[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+", clean_text):
+            return True
+
+    return False
+
 try:
     from app.core.rev1.exceptions import AuthorizationError
 except ImportError:
@@ -1308,6 +1466,7 @@ async def generate_fast_path_xendit_qris_batch1(
     Bypass form -> Call Xendit Dynamic QRIS Rp249.000 dengan strict timeout cap 1.2s.
     Total round-trip latency guaranteed < 2.0s.
     """
+    require_academy_direct_checkout_enabled("generate_fast_path_xendit_qris_batch1")
     t0 = time.monotonic()
     clean_p = normalize_phone_number(customer_phone) or customer_phone
     amount = 249000
@@ -1625,6 +1784,7 @@ def _persist_order_and_checkout_session_tx(
     """Atomically resolves tenant, allocates unique_code (savepoint-retried on 23505),
     and commits orders + checkout_sessions in one PostgreSQL transaction.
     """
+    require_academy_direct_checkout_enabled("_persist_order_and_checkout_session_tx")
     from app.core.database import get_db_connection
 
     now = datetime.fromtimestamp(now_epoch, tz=timezone.utc)
@@ -1805,6 +1965,10 @@ def generate_academy_qris_invoice(
     TTL Expiry: Tepat 15 menit.
     Atomically persists `orders` and `checkout_sessions` in PostgreSQL before returning any invoice or token.
     """
+    # Phase 1 Scope Lockdown (service-level defense-in-depth default-deny):
+    # Must block regardless of APP_ENV, ONLINEBOOST_PAYMENT_STRICT_HOLD, whitelist, or tenant_id.
+    require_academy_direct_checkout_enabled("generate_academy_qris_invoice")
+
     is_penny_test = (sku_id == TEST_PENNY_SKU_ID)
 
     # Server-Side Access Control Guard for Internal Test SKU
@@ -2699,6 +2863,41 @@ class AcademyBotStateMachine:
         )
 
     @classmethod
+    async def _handle_direct_checkout_disabled(
+        cls,
+        *,
+        clean_phone: str,
+        resolved_name: str,
+        customer_email: Optional[str],
+        effective_tenant: str,
+        campaign: str,
+        phone_number_id: Optional[str] = None,
+        channel: str = "ACADEMY_BOT",
+    ) -> Dict[str, Any]:
+        """
+        Phase 1 Scope Lockdown safe reply for inbound WhatsApp checkout/invoice requests
+        when ENABLE_ACADEMY_DIRECT_CHECKOUT is not explicitly 'true'.
+        Never creates orders, checkout_sessions, payment_intents, or QRIS payloads.
+        """
+        res = build_academy_checkout_disabled_response(
+            tenant_id=effective_tenant,
+            channel=channel,
+            campaign=campaign,
+            customer_name=resolved_name,
+            customer_email=customer_email,
+        )
+        try:
+            await send_whatsapp_text(
+                to_phone=clean_phone,
+                text=res["reply"],
+                tenant_id=effective_tenant,
+                phone_number_id=phone_number_id,
+            )
+        except Exception as e:
+            logger.warning(f"[AcademyScopeLockdown] WhatsApp disabled reply note: {e}")
+        return res
+
+    @classmethod
     async def _handle_payment_strict_hold(
         cls,
         clean_phone: str,
@@ -2929,6 +3128,16 @@ class AcademyBotStateMachine:
             and (raw_msg.get("interactive") or {}).get("type") == "nfm_reply"
         )
         if is_flow_reply and tenant_id == "onlineboost":
+            if not is_academy_direct_checkout_enabled():
+                return await cls._handle_direct_checkout_disabled(
+                    clean_phone=clean_phone,
+                    resolved_name=contact_name or session.get("name") or "Kak",
+                    customer_email=session.get("email"),
+                    effective_tenant=tenant_id,
+                    campaign="onlineboost_batch1",
+                    phone_number_id=phone_number_id,
+                    channel="ACADEMY_BOT_FLOW_REPLY",
+                )
             from app.services.ctwa_state_engine import ctwa_state_engine
             ctwa_res = await ctwa_state_engine.process_turn(
                 phone=sender_phone,
@@ -3097,6 +3306,17 @@ class AcademyBotStateMachine:
                     "bayar via qris", "siapkan qris", "siapkan_qris", "bayar qris", "metode rahasia", "minta qris", "kirim qris"
                 ])
                 if is_direct_qris:
+                    if not is_academy_direct_checkout_enabled():
+                        return await cls._handle_direct_checkout_disabled(
+                            clean_phone=clean_phone,
+                            resolved_name=resolved_name,
+                            customer_email=session.get("email"),
+                            effective_tenant=str(session.get("tenant_id") or tenant_id or "onlineboost").strip().lower(),
+                            campaign="onlineboost_batch1",
+                            phone_number_id=phone_number_id,
+                            channel="ACADEMY_BOT_DIRECT_QRIS",
+                        )
+
                     staged_alumni = lookup_staging_alumni_cpm(clean_phone, tenant_id=tenant_id)
                     staged_email = None
                     if staged_alumni:
@@ -3647,6 +3867,19 @@ class AcademyBotStateMachine:
                 customer_email = session.get("email") or f"order.{clean_phone[-6:]}@boontrack.id"
                 effective_tenant = session.get("tenant_id") or tenant_id or "onlineboost"
 
+                # Phase 1 Scope Lockdown: Block ALL tenants (onlineboost and non-onlineboost)
+                # regardless of ONLINEBOOST_PAYMENT_STRICT_HOLD or whitelist.
+                if not is_academy_direct_checkout_enabled():
+                    return await cls._handle_direct_checkout_disabled(
+                        clean_phone=clean_phone,
+                        resolved_name=resolved_name,
+                        customer_email=customer_email,
+                        effective_tenant=effective_tenant,
+                        campaign="storefront_direct",
+                        phone_number_id=phone_number_id,
+                        channel="ACADEMY_BOT_STOREFRONT_DIRECT",
+                    )
+
                 # P0 STRICT HOLD & PILOT ISOLATION GUARD: Reject before invoice generation
                 if effective_tenant == "onlineboost" and is_onlineboost_payment_held(clean_phone):
                     return await cls._handle_payment_strict_hold(
@@ -3793,6 +4026,19 @@ class AcademyBotStateMachine:
                             break
 
             effective_tenant = session.get("tenant_id") or tenant_id or "onlineboost"
+
+            # Phase 1 Scope Lockdown: Block ALL tenants (onlineboost and non-onlineboost)
+            # regardless of ONLINEBOOST_PAYMENT_STRICT_HOLD or whitelist.
+            if not is_academy_direct_checkout_enabled():
+                return await cls._handle_direct_checkout_disabled(
+                    clean_phone=clean_phone,
+                    resolved_name=resolved_name,
+                    customer_email=customer_email,
+                    effective_tenant=effective_tenant,
+                    campaign=session.get("campaign") or "alumni_cpm",
+                    phone_number_id=phone_number_id,
+                    channel="ACADEMY_BOT_STATE1_INVOICE",
+                )
 
             # P0 STRICT HOLD GUARD: Reject request BEFORE invoice generation and database mutation
             if effective_tenant == "onlineboost" and is_onlineboost_payment_held(clean_phone):

@@ -342,12 +342,16 @@ class CTWAStateEngine:
         session["lead_name"] = clean_name
         session["lead_email"] = clean_email
 
-        # P0 STRICT HOLD GUARD: Reject request BEFORE Xendit invocation and BEFORE database mutations
+        # Phase 1 Scope Lockdown: Strict default-deny BEFORE strict-hold, Xendit, or orders mutation
         from app.services.academy_service import (
+            require_academy_direct_checkout_enabled,
             is_onlineboost_payment_held,
             mask_phone_for_log,
             persist_hold_registration_intent,
         )
+        require_academy_direct_checkout_enabled("ctwa_state_engine.execute_deterministic_gatekeeper")
+
+        # P0 STRICT HOLD GUARD: Reject request BEFORE Xendit invocation and BEFORE database mutations
         if is_onlineboost_payment_held(clean_phone):
             logger.info(f"[GATEKEEPER] Payment STRICT HOLD active for OnlineBoost Batch 1. Request queued without Xendit or order mutation for {mask_phone_for_log(clean_phone)} ({mask_email(clean_email)}).")
             persisted, persist_backend, is_duplicate = persist_hold_registration_intent(
@@ -771,14 +775,46 @@ class CTWAStateEngine:
 
         if lead_detected:
             full_name, email = lead_detected
-            logger.info(f"[CTWA_TURN] Lead / QRIS Intent detected: {full_name} ({email}) -> Triggering Pre-LLM Gatekeeper")
-            gk_result = await self.execute_deterministic_gatekeeper(
-                phone=clean_phone,
-                name=full_name,
-                email=email,
-                phone_number_id=phone_number_id,
-                ctwa_clid=ctwa_clid,
+            from app.services.academy_service import (
+                AcademyDirectCheckoutDisabledError,
+                ACADEMY_CHECKOUT_DISABLED_ERROR_CODE,
+                ACADEMY_CHECKOUT_DISABLED_WA_REPLY,
             )
+            logger.info(f"[CTWA_TURN] Lead / QRIS Intent detected: {full_name} ({email}) -> Triggering Pre-LLM Gatekeeper")
+            try:
+                gk_result = await self.execute_deterministic_gatekeeper(
+                    phone=clean_phone,
+                    name=full_name,
+                    email=email,
+                    phone_number_id=phone_number_id,
+                    ctwa_clid=ctwa_clid,
+                )
+            except AcademyDirectCheckoutDisabledError:
+                if phone_number_id and clean_phone:
+                    try:
+                        await cloud_api.send_whatsapp_text(
+                            to_phone=clean_phone,
+                            text=ACADEMY_CHECKOUT_DISABLED_WA_REPLY,
+                            phone_number_id=phone_number_id,
+                            tenant_id="onlineboost",
+                        )
+                    except Exception as _e:
+                        logger.debug(f"[CTWA_TURN] WA disabled reply note: {_e}")
+                return {
+                    "success": True,
+                    "status": "disabled",
+                    "action": ACADEMY_CHECKOUT_DISABLED_ERROR_CODE,
+                    "error_code": ACADEMY_CHECKOUT_DISABLED_ERROR_CODE,
+                    "reply": ACADEMY_CHECKOUT_DISABLED_WA_REPLY,
+                    "reply_text": ACADEMY_CHECKOUT_DISABLED_WA_REPLY,
+                    "media_url": "",
+                    "qr_code_url": "",
+                    "qris_payload": "",
+                    "order_id": None,
+                    "total_amount": 0,
+                    "downward_code": 0,
+                    "current_state": "STATE_CHECKOUT_DISABLED_PHASE1",
+                }
             if gk_result.get("strict_hold"):
                 caption = gk_result.get("caption") or ""
                 return {

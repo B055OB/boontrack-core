@@ -72,7 +72,8 @@ TENANT_BETA_SLUG = "tenant_beta"
 
 
 @pytest.fixture(autouse=True)
-def _clean_academy_memory():
+def _clean_academy_memory(monkeypatch):
+    monkeypatch.setenv("ENABLE_ACADEMY_DIRECT_CHECKOUT", "true")
     reset_academy_test_state()
     yield
     reset_academy_test_state()
