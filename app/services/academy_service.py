@@ -2404,7 +2404,20 @@ def _execute_atomic_settlement_tx(
                 "message": "Duplicate payment event blocked atomically.",
             }
 
-        # Single-Writer Architecture: Enqueue outbox projection (ZERO direct UPDATE public.orders)
+        cur.execute(
+            """
+            UPDATE public.orders
+            SET status = 'PAID',
+                payment_status = 'PAID',
+                order_status = 'PAID',
+                paid_at = COALESCE(paid_at, %s),
+                updated_at = %s
+            WHERE id = %s;
+            """,
+            (now_utc, now_utc, order_id),
+        )
+
+        # Single-Writer Architecture: Enqueue outbox projection alongside core settlement
         try:
             cur.execute(
                 """
