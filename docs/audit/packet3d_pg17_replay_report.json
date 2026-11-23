@@ -11,7 +11,7 @@
     "C-04": "PASS (20261030_global_auth precedes atomic_google/observability/oauth_state -> 20261112 -> 20261115 -> 20261120 -> 20261122; all 5 RPCs/triggers verified)",
     "C-05/C-06": "PASS (all 10 base catalog tables + public.merchants with RLS=true & FORCE=true verified on clean PG 17 replay)",
     "C-07": "PASS (113/113 tenant-scoped tables have RLS=true & FORCE=true; 0 anon/authenticated/public wildcard USING(true) policies)",
-    "C-08": "PASS (tenant_config_audit_logs FORCE RLS=true; is_jti_revoked EXECUTE public=False, anon=True, authenticated=True, service_role=True; trg_tenants_set_updated_at strictly monotonic across 5 rapid updates: 2026-11-23T03:18:57.135034+00:00 -> 2026-11-23T03:18:57.288281+00:00)"
+    "C-08": "PASS (tenant_config_audit_logs FORCE RLS=true; is_jti_revoked EXECUTE public=False, anon=True, authenticated=True, service_role=True; trg_tenants_set_updated_at strictly monotonic across 5 rapid updates: 2026-11-23T04:18:22.259518+00:00 -> 2026-11-23T04:18:22.371623+00:00)"
   },
   "p3d_schema_audit": {
     "orders_p3d_columns_present": {
@@ -197,6 +197,8 @@
       "uq_payment_outbox_events_idempotency_key": "UNIQUE (idempotency_key)"
     },
     "payment_outbox_events_on_conflict_idempotency_key_probe": "PASS (first insert succeeded, duplicate idempotency_key resolved via ON CONFLICT (idempotency_key) DO NOTHING without 42P10)",
+    "payment_outbox_events_on_conflict_probe_passed": true,
+    "missing_columns": [],
     "payment_outbox_events_missing_columns_expected_by_A3_dispatcher_and_provenance": [],
     "rls_status": {
       "orders": {
@@ -215,6 +217,21 @@
         "rls": true,
         "force_rls": true
       }
+    },
+    "wildcard_policies_count": 0,
+    "wildcard_policies": [],
+    "tenant_tables_rls_total": 113,
+    "tenant_tables_missing_rls_or_force_rls": []
+  },
+  "provenance": {
+    "source_head_sha": "0905969c5893041d8337083986afea332e68a101",
+    "inbox_head_sha": "c213b44d2dbbc7645b437059edbc2ca058e5c191",
+    "generated_at_utc": "2026-11-23T04:18:18.193631+00:00",
+    "sha256": {
+      "migrations/reconciliation/shared_db_migration_manifest.json": "d98760bb425ce9b946616828b6f07960fccb1851d7b3f144b7813192564f3354",
+      "tools/packet3d-e2e/replay_manifest_pg17.py": "131f7a3b81a85ca953fc96908283baefb0c89a1dbb916354bf4706efddc087f2",
+      "migrations/037_core_payment_intent_idempotency_and_settlement_outbox.sql": "801a11227737a31cd83640b1596a204ffffd16bd21419c1164bdb8d2cf0c749c",
+      "inbox:supabase/migrations/20261123_orders_idempotency_and_projection.sql": "ad93e13c8fe027e28fec995e813d23157ebafdf4a67a6e756c014729a92d7743"
     }
   },
   "pg_database": "boontrack_p3d_e2e",
@@ -333,5 +350,7 @@
     "109: [core] 037_core_payment_intent_idempotency_and_settlement_outbox.sql",
     "110: [reconciliation] R04_c07_c08_post_rls_and_privilege_hardening.sql"
   ],
-  "replay_ratio": "110/110"
+  "replay_ratio": "110/110",
+  "gate_passed": true,
+  "gate_failures": []
 }
