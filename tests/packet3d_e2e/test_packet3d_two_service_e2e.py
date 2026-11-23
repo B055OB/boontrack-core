@@ -45,8 +45,24 @@ def test_core_single_writer_zero_direct_orders_update_in_settlement_paths():
     """Core settlement paths must not directly UPDATE public.orders to PAID."""
     xendit_txt = (CORE_ROOT / "app" / "routes" / "xendit.py").read_text(encoding="utf-8")
     checkout_txt = (CORE_ROOT / "app" / "services" / "checkout_service.py").read_text(encoding="utf-8")
+    prov_txt = (CORE_ROOT / "app" / "core" / "security" / "provenance_authority.py").read_text(encoding="utf-8")
+    acad_txt = (CORE_ROOT / "app" / "services" / "academy_service.py").read_text(encoding="utf-8")
+    disp_txt = (CORE_ROOT / "app" / "workers" / "payment_outbox_dispatcher.py").read_text(encoding="utf-8")
+
     assert "UPDATE orders" not in xendit_txt
     assert "SET status = 'PAID'" not in checkout_txt
+    assert "UPDATE orders" not in prov_txt
+    assert "UPDATE public.orders" not in acad_txt
+
+    # Zero runtime DDL in settlement or dispatcher paths
+    for path_name, txt in [
+        ("provenance_authority", prov_txt),
+        ("academy_service", acad_txt),
+        ("checkout_service", checkout_txt),
+        ("outbox_dispatcher", disp_txt),
+    ]:
+        assert "CREATE TABLE IF NOT EXISTS payment_outbox_events" not in txt, f"Runtime DDL found in {path_name}"
+        assert "ALTER TABLE payment_outbox_events" not in txt, f"Runtime DDL found in {path_name}"
 
 
 def _load_live_evidence() -> dict:

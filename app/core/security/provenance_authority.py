@@ -2083,110 +2083,50 @@ def commit_verified_settlement_transaction(
                         canonical_tenant_id,
                     ),
                 )
-            # Step B.2: Durable late settlement outbox event (ZERO UPDATE orders)
+            # Step B.2: Mandatory late settlement outbox event (zero direct orders mutation, zero runtime DDL, zero swallowed savepoints)
             if not is_mock_conn:
-                savepoint_name = f"sp_outbox_{uuid.uuid4().hex[:8]}"
-                savepoint_active = False
-                try:
-                    cur.execute(f"SAVEPOINT {savepoint_name};")
-                    savepoint_active = True
-                    cur.execute(
-                        """
-                        CREATE TABLE IF NOT EXISTS payment_outbox_events (
-                            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-                            event_id VARCHAR(128) NOT NULL,
-                            aggregate_id VARCHAR(150) NOT NULL,
-                            event_type VARCHAR(64) NOT NULL,
-                            payload JSONB NOT NULL DEFAULT '{}'::jsonb,
-                            signature VARCHAR(255),
-                            delivery_status VARCHAR(32) NOT NULL DEFAULT 'PENDING',
-                            retry_count INT NOT NULL DEFAULT 0,
-                            next_retry_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                            delivered_at TIMESTAMPTZ,
-                            created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                            updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                            CONSTRAINT uq_payment_outbox_events_event_id UNIQUE (event_id)
-                        );
-                        ALTER TABLE payment_outbox_events ENABLE ROW LEVEL SECURITY;
-                        ALTER TABLE payment_outbox_events FORCE ROW LEVEL SECURITY;
-                        """
-                    )
-                    late_outbox_key = f"{provider}:{event_id}:late"
-                    outbox_payload = {
-                        "canonical_tenant_id": canonical_tenant_id,
-                        "order_id": order_id,
-                        "provider": provider,
-                        "provider_event_id": provider_event_id,
-                        "verified_amount": verified_amount,
-                        "payload": json.loads(raw_payload_json) if isinstance(raw_payload_json, str) else raw_payload_json,
-                        "provenance_envelope": provenance_envelope,
-                    }
-                    prov_sig = None
-                    if isinstance(provenance_envelope, dict):
-                        prov_sig = str(provenance_envelope.get("signature") or "")[:255] or None
+                late_outbox_key = f"{provider}:{event_id}:late"
+                outbox_payload = {
+                    "canonical_tenant_id": canonical_tenant_id,
+                    "order_id": order_id,
+                    "provider": provider,
+                    "provider_event_id": provider_event_id,
+                    "verified_amount": verified_amount,
+                    "payload": json.loads(raw_payload_json) if isinstance(raw_payload_json, str) else raw_payload_json,
+                    "provenance_envelope": provenance_envelope,
+                }
+                prov_sig = None
+                if isinstance(provenance_envelope, dict):
+                    prov_sig = str(provenance_envelope.get("signature") or "")[:255] or None
 
-                    cur.execute(
-                        """
-                        SELECT column_name
-                        FROM information_schema.columns
-                        WHERE table_name = 'payment_outbox_events' AND table_schema = 'public';
-                        """
+                cur.execute(
+                    """
+                    INSERT INTO public.payment_outbox_events (
+                        event_id, aggregate_id, event_type, canonical_tenant_id, order_id,
+                        provider, provider_event_id, idempotency_key, payload, provenance_envelope,
+                        signature, delivery_status, status, created_at, updated_at
+                    ) VALUES (
+                        %s, %s, 'PAYMENT_LATE_QUARANTINED', %s, %s,
+                        %s, %s, %s, %s::jsonb, %s::jsonb,
+                        %s, 'PENDING', 'PENDING', %s, %s
                     )
-                    existing_cols = {row[0] for row in cur.fetchall()}
-                    if "aggregate_id" in existing_cols:
-                        cur.execute(
-                            """
-                            INSERT INTO payment_outbox_events (
-                                event_id, aggregate_id, event_type, payload, signature,
-                                delivery_status, created_at, updated_at
-                            ) VALUES (
-                                %s, %s, 'PAYMENT_LATE_QUARANTINED', %s::jsonb, %s,
-                                'PENDING', %s, %s
-                            )
-                            ON CONFLICT (event_id) DO NOTHING;
-                            """,
-                            (
-                                late_outbox_key,
-                                order_id,
-                                json.dumps(outbox_payload),
-                                prov_sig,
-                                now_utc,
-                                now_utc,
-                            ),
-                        )
-                    else:
-                        cur.execute(
-                            """
-                            INSERT INTO payment_outbox_events (
-                                event_type, canonical_tenant_id, order_id, provider, provider_event_id,
-                                idempotency_key, payload, provenance_envelope, status, created_at, updated_at
-                            ) VALUES (
-                                'PAYMENT_LATE_QUARANTINED', %s, %s, %s, %s,
-                                %s, %s::jsonb, %s::jsonb, 'PENDING', %s, %s
-                            )
-                            ON CONFLICT (idempotency_key) DO NOTHING;
-                            """,
-                            (
-                                canonical_tenant_id,
-                                order_id,
-                                provider,
-                                provider_event_id,
-                                late_outbox_key,
-                                raw_payload_json,
-                                json.dumps(provenance_envelope),
-                                now_utc,
-                                now_utc,
-                            ),
-                        )
-                    cur.execute(f"RELEASE SAVEPOINT {savepoint_name};")
-                    savepoint_active = False
-                except Exception as outbox_err:
-                    if savepoint_active:
-                        try:
-                            cur.execute(f"ROLLBACK TO SAVEPOINT {savepoint_name};")
-                        except Exception:
-                            pass
-                    logger.warning(f"[Outbox Quarantine Event Insert Note] {outbox_err}")
+                    ON CONFLICT (event_id) DO NOTHING;
+                    """,
+                    (
+                        late_outbox_key,
+                        order_id,
+                        canonical_tenant_id,
+                        order_id,
+                        provider,
+                        provider_event_id,
+                        late_outbox_key,
+                        json.dumps(outbox_payload),
+                        json.dumps(provenance_envelope) if provenance_envelope else None,
+                        prov_sig,
+                        now_utc,
+                        now_utc,
+                    ),
+                )
 
             conn.commit()
             return {
@@ -2282,134 +2222,50 @@ def commit_verified_settlement_transaction(
                 "fulfillment_triggered": False,
                 "capi_triggered": False,
             }
-        # Step D: Atomic order status update & durable Stage 4 outbox record
-        cur.execute(
-            """
-            UPDATE orders
-            SET status = 'PAID',
-                payment_status = 'PAID',
-                order_status = 'PAID',
-                fulfillment_status = 'PENDING_STAGE4_VERIFICATION',
-                paid_at = COALESCE(orders.paid_at, %s),
-                updated_at = %s
-            WHERE id = %s
-              AND tenant_id = %s
-              AND COALESCE(gross_amount, amount, 0) = %s
-              AND COALESCE(UPPER(TRIM(status)), '') IN ('PENDING', 'WAITING_PAYMENT', 'UNPAID', '');
-            """,
-            (now_utc, now_utc, order_id, canonical_tenant_id, verified_amount),
-        )
-        if getattr(cur, "rowcount", 0) != 1:
-            _safe_rollback_conn(conn)
-            raise SettlementProvenanceError(
-                f"Atomic order status transition failed for order '{order_id}'.",
-                error_code="ORDER_STATE_TRANSITION_FAILED",
-                http_status=409,
-            )
-
+        # Step D: Single-Writer Architecture — Atomic mandatory payment_outbox_events projection (zero direct orders mutation)
         if not is_mock_conn:
-            savepoint_name = f"sp_outbox_{uuid.uuid4().hex[:8]}"
-            savepoint_active = False
-            try:
-                cur.execute(f"SAVEPOINT {savepoint_name};")
-                savepoint_active = True
-                cur.execute(
-                    """
-                    CREATE TABLE IF NOT EXISTS payment_outbox_events (
-                        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-                        event_id VARCHAR(128) NOT NULL,
-                        aggregate_id VARCHAR(150) NOT NULL,
-                        event_type VARCHAR(64) NOT NULL,
-                        payload JSONB NOT NULL DEFAULT '{}'::jsonb,
-                        signature VARCHAR(255),
-                        delivery_status VARCHAR(32) NOT NULL DEFAULT 'PENDING',
-                        retry_count INT NOT NULL DEFAULT 0,
-                        next_retry_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                        delivered_at TIMESTAMPTZ,
-                        created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                        updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                        CONSTRAINT uq_payment_outbox_events_event_id UNIQUE (event_id)
-                    );
-                    ALTER TABLE payment_outbox_events ENABLE ROW LEVEL SECURITY;
-                    ALTER TABLE payment_outbox_events FORCE ROW LEVEL SECURITY;
-                    """
-                )
-                settled_outbox_key = f"{provider}:{event_id}:settled"
-                outbox_payload = {
-                    "canonical_tenant_id": canonical_tenant_id,
-                    "order_id": order_id,
-                    "provider": provider,
-                    "provider_event_id": provider_event_id,
-                    "verified_amount": verified_amount,
-                    "payload": json.loads(raw_payload_json) if isinstance(raw_payload_json, str) else raw_payload_json,
-                    "provenance_envelope": provenance_envelope,
-                }
-                prov_sig = None
-                if isinstance(provenance_envelope, dict):
-                    prov_sig = str(provenance_envelope.get("signature") or "")[:255] or None
+            settled_outbox_key = f"{provider}:{event_id}:settled"
+            outbox_payload = {
+                "canonical_tenant_id": canonical_tenant_id,
+                "order_id": order_id,
+                "provider": provider,
+                "provider_event_id": provider_event_id,
+                "verified_amount": verified_amount,
+                "payload": json.loads(raw_payload_json) if isinstance(raw_payload_json, str) else raw_payload_json,
+                "provenance_envelope": provenance_envelope,
+            }
+            prov_sig = None
+            if isinstance(provenance_envelope, dict):
+                prov_sig = str(provenance_envelope.get("signature") or "")[:255] or None
 
-                cur.execute(
-                    """
-                    SELECT column_name
-                    FROM information_schema.columns
-                    WHERE table_name = 'payment_outbox_events' AND table_schema = 'public';
-                    """
+            cur.execute(
+                """
+                INSERT INTO public.payment_outbox_events (
+                    event_id, aggregate_id, event_type, canonical_tenant_id, order_id,
+                    provider, provider_event_id, idempotency_key, payload, provenance_envelope,
+                    signature, delivery_status, status, created_at, updated_at
+                ) VALUES (
+                    %s, %s, 'PAYMENT_SETTLED', %s, %s,
+                    %s, %s, %s, %s::jsonb, %s::jsonb,
+                    %s, 'PENDING', 'PENDING', %s, %s
                 )
-                existing_cols = {row[0] for row in cur.fetchall()}
-                if "aggregate_id" in existing_cols:
-                    cur.execute(
-                        """
-                        INSERT INTO payment_outbox_events (
-                            event_id, aggregate_id, event_type, payload, signature,
-                            delivery_status, created_at, updated_at
-                        ) VALUES (
-                            %s, %s, 'PAYMENT_SETTLED', %s::jsonb, %s,
-                            'PENDING', %s, %s
-                        )
-                        ON CONFLICT (event_id) DO NOTHING;
-                        """,
-                        (
-                            settled_outbox_key,
-                            order_id,
-                            json.dumps(outbox_payload),
-                            prov_sig,
-                            now_utc,
-                            now_utc,
-                        ),
-                    )
-                else:
-                    cur.execute(
-                        """
-                        INSERT INTO payment_outbox_events (
-                            event_type, canonical_tenant_id, order_id, provider, provider_event_id,
-                            idempotency_key, payload, provenance_envelope, status, created_at, updated_at
-                        ) VALUES (
-                            'PAYMENT_SETTLED', %s, %s, %s, %s,
-                            %s, %s::jsonb, %s::jsonb, 'PENDING', %s, %s
-                        )
-                        ON CONFLICT (idempotency_key) DO NOTHING;
-                        """,
-                        (
-                            canonical_tenant_id,
-                            order_id,
-                            provider,
-                            provider_event_id,
-                            settled_outbox_key,
-                            raw_payload_json,
-                            json.dumps(provenance_envelope),
-                            now_utc,
-                            now_utc,
-                        ),
-                    )
-                cur.execute(f"RELEASE SAVEPOINT {savepoint_name};")
-                savepoint_active = False
-            except Exception as outbox_err:
-                if savepoint_active:
-                    try:
-                        cur.execute(f"ROLLBACK TO SAVEPOINT {savepoint_name};")
-                    except Exception:
-                        pass
-                logger.warning(f"[Outbox Settled Event Insert Note] {outbox_err}")
+                ON CONFLICT (event_id) DO NOTHING;
+                """,
+                (
+                    settled_outbox_key,
+                    order_id,
+                    canonical_tenant_id,
+                    order_id,
+                    provider,
+                    provider_event_id,
+                    settled_outbox_key,
+                    json.dumps(outbox_payload),
+                    json.dumps(provenance_envelope) if provenance_envelope else None,
+                    prov_sig,
+                    now_utc,
+                    now_utc,
+                ),
+            )
 
         # Step E: Financial ledger accounting (fee_amount=NULL, net_amount=NULL, PENDING_RECONCILIATION)
         ledger_meta_json = json.dumps(

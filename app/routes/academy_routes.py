@@ -121,11 +121,10 @@ async def create_academy_invoice(
       APP_MASTER_KEY ditolak sesuai P0-A).
     - Menerbitkan signed checkout_session_token yang mengikat order_id + canonical_tenant_id dengan TTL 15 menit.
     """
-    # Phase 1 Scope Lockdown: Academy direct checkout disabled in production
+    # Phase 1 Scope Lockdown: Academy direct checkout disabled across ALL environments
     # (CTO Decision & PACKET_3D_STEP2A_PHASE1_SCOPE_VERIFICATION.md §2.2)
-    if os.getenv("ENABLE_ACADEMY_DIRECT_CHECKOUT", "").lower() == "false" or (
-        os.getenv("APP_ENV") == "production" and os.getenv("ENABLE_ACADEMY_DIRECT_CHECKOUT", "").lower() != "true"
-    ):
+    # Default-deny: Disabled unless ENABLE_ACADEMY_DIRECT_CHECKOUT is explicitly "true"
+    if os.getenv("ENABLE_ACADEMY_DIRECT_CHECKOUT", "").strip().lower() != "true":
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail={

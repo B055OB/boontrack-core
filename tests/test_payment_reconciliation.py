@@ -387,10 +387,20 @@ class TestPaymentWebhookCallbackHandler(unittest.TestCase):
         self.assertEqual(data["status"], "SUCCESS")
         self.assertEqual(data["external_id"], order_id)
 
-        order = self._fetch_pg_order(order_id)
-        self.assertEqual(order["status"], "PAID")
-        self.assertEqual(order["payment_status"], "PAID")
-        self.assertIsNotNone(order["paid_at"])
+        # Single-Writer Core Architecture: zero direct UPDATE orders; durable outbox projection enqueued
+        conn = get_db_connection()
+        cur = conn.cursor()
+        try:
+            cur.execute(
+                "SELECT event_type, status FROM public.payment_outbox_events WHERE order_id = %s;",
+                (order_id,),
+            )
+            outbox_row = cur.fetchone()
+            self.assertIsNotNone(outbox_row)
+            self.assertEqual(outbox_row[0], "PAYMENT_SETTLED")
+        finally:
+            cur.close()
+            conn.close()
 
     def test_webhook_durable_idempotency_duplicate_is_noop(self):
         order_id = f"ORD-IDEMP-{uuid.uuid4().hex[:8]}"
@@ -469,9 +479,20 @@ class TestPaymentWebhookCallbackHandler(unittest.TestCase):
         data = res.json()
         self.assertEqual(data["status"], "ok")
 
-        order = self._fetch_pg_order(order_id)
-        self.assertEqual(order["status"], "PAID")
-        self.assertEqual(order["payment_status"], "PAID")
+        # Single-Writer Core Architecture: zero direct UPDATE orders; durable outbox projection enqueued
+        conn = get_db_connection()
+        cur = conn.cursor()
+        try:
+            cur.execute(
+                "SELECT event_type, status FROM public.payment_outbox_events WHERE order_id = %s;",
+                (order_id,),
+            )
+            outbox_row = cur.fetchone()
+            self.assertIsNotNone(outbox_row)
+            self.assertEqual(outbox_row[0], "PAYMENT_SETTLED")
+        finally:
+            cur.close()
+            conn.close()
 
 
 if __name__ == "__main__":

@@ -273,70 +273,32 @@ def execute_order_settlement_transaction(
                 )
             )
 
-        # 3. Single-Writer Settlement: insert into payment_outbox_events (ZERO direct UPDATE orders)
+        # 3. Single-Writer Settlement: mandatory insert into payment_outbox_events (zero direct orders mutation)
         outbox_key = f"{provider.upper()}:{event_id}:settled"
-        try:
-            cur.execute("SAVEPOINT checkout_outbox_sp;")
-            cur.execute(
-                """
-                CREATE TABLE IF NOT EXISTS payment_outbox_events (
-                    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-                    event_id VARCHAR(128) DEFAULT gen_random_uuid()::text,
-                    aggregate_id VARCHAR(150),
-                    event_type VARCHAR(64) NOT NULL,
-                    canonical_tenant_id VARCHAR(100) NOT NULL,
-                    order_id VARCHAR(128) NOT NULL,
-                    payment_intent_id UUID,
-                    provider VARCHAR(32) NOT NULL,
-                    provider_event_id VARCHAR(128),
-                    idempotency_key VARCHAR(255) NOT NULL UNIQUE,
-                    payload JSONB NOT NULL,
-                    provenance_envelope JSONB,
-                    status VARCHAR(32) NOT NULL DEFAULT 'PENDING',
-                    attempt_count INT NOT NULL DEFAULT 0,
-                    next_attempt_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-                    locked_by VARCHAR(128),
-                    locked_at TIMESTAMPTZ,
-                    delivered_at TIMESTAMPTZ,
-                    last_error TEXT,
-                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-                    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-                );
-                ALTER TABLE payment_outbox_events ENABLE ROW LEVEL SECURITY;
-                ALTER TABLE payment_outbox_events FORCE ROW LEVEL SECURITY;
-                """
+        cur.execute(
+            """
+            INSERT INTO public.payment_outbox_events (
+                event_id, aggregate_id, event_type, canonical_tenant_id, order_id, provider, provider_event_id,
+                idempotency_key, payload, status, created_at, updated_at
+            ) VALUES (
+                %s, %s, 'PAYMENT_SETTLED', %s, %s, %s, %s,
+                %s, %s::jsonb, 'PENDING', %s, %s
             )
-            cur.execute(
-                """
-                INSERT INTO payment_outbox_events (
-                    event_id, aggregate_id, event_type, canonical_tenant_id, order_id, provider, provider_event_id,
-                    idempotency_key, payload, status, created_at, updated_at
-                ) VALUES (
-                    %s, %s, 'PAYMENT_SETTLED', %s, %s, %s, %s,
-                    %s, %s::jsonb, 'PENDING', %s, %s
-                )
-                ON CONFLICT (idempotency_key) DO NOTHING;
-                """,
-                (
-                    outbox_key,
-                    str(external_id),
-                    tenant_id,
-                    str(external_id),
-                    provider.upper(),
-                    str(event_id),
-                    outbox_key,
-                    payload_json,
-                    now_utc,
-                    now_utc,
-                ),
-            )
-            cur.execute("RELEASE SAVEPOINT checkout_outbox_sp;")
-        except Exception as ob_err:
-            try:
-                cur.execute("ROLLBACK TO SAVEPOINT checkout_outbox_sp;")
-            except Exception:
-                pass
-            logger.warning(f"[Checkout Outbox Note] {ob_err}")
+            ON CONFLICT (idempotency_key) DO NOTHING;
+            """,
+            (
+                outbox_key,
+                str(external_id),
+                tenant_id,
+                str(external_id),
+                provider.upper(),
+                str(event_id),
+                outbox_key,
+                payload_json,
+                now_utc,
+                now_utc,
+            ),
+        )
 
         # 4. Atomic Stock Deduction (FASE 4)
         if order_prod_id and order_prod_id not in ("prod_digital", "generic_digital"):

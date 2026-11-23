@@ -108,11 +108,18 @@ def _fetch_order_db_snapshot(order_id: str):
             (order_id,),
         )
         ledger_rows = cur.fetchall()
+        cur.execute(
+            "SELECT event_id, aggregate_id, event_type, status, idempotency_key "
+            "FROM public.payment_outbox_events WHERE order_id = %s;",
+            (order_id,),
+        )
+        outbox_rows = cur.fetchall()
         return {
             "order": ord_row,
             "checkout_session": cs_row,
             "payment_events": evt_rows,
             "financial_ledger": ledger_rows,
+            "payment_outbox_events": outbox_rows,
         }
     finally:
         cur.close()
@@ -298,10 +305,10 @@ def test_proof3_successful_settlement_commits_all_tables_with_canonical_tenant()
     snap = _fetch_order_db_snapshot(order_id)
     assert snap["order"][1] == TENANT_ALPHA_UUID
     assert snap["order"][2] == TENANT_ALPHA_SLUG
-    assert snap["order"][3] == "PAID"
-    assert snap["order"][4] == "PAID"
-    assert snap["order"][5] == "PAID"
-    assert snap["order"][7] is not None
+    assert snap["order"][3] == "PENDING"  # Core single-writer: zero direct UPDATE orders (Inbox projection owns status)
+    assert len(snap["payment_outbox_events"]) == 1
+    assert snap["payment_outbox_events"][0][2] == "PAYMENT_SETTLED"
+    assert snap["payment_outbox_events"][0][3] == "PENDING"
 
     assert snap["checkout_session"][1] == TENANT_ALPHA_UUID
     assert snap["checkout_session"][2] == TENANT_ALPHA_UUID

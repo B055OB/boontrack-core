@@ -62,28 +62,8 @@ if not hasattr(InternalPaymentHMACKeyring, "get_active_key"):
 
 
 def _ensure_outbox_table_exists(cur) -> None:
-    """Idempotently bootstrap payment_outbox_events table if absent."""
-    cur.execute(
-        """
-        CREATE TABLE IF NOT EXISTS payment_outbox_events (
-            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-            event_id VARCHAR(128) NOT NULL,
-            aggregate_id VARCHAR(150) NOT NULL,
-            event_type VARCHAR(64) NOT NULL,
-            payload JSONB NOT NULL DEFAULT '{}'::jsonb,
-            signature VARCHAR(255),
-            delivery_status VARCHAR(32) NOT NULL DEFAULT 'PENDING',
-            retry_count INT NOT NULL DEFAULT 0,
-            next_retry_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-            delivered_at TIMESTAMPTZ,
-            created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-            updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-            CONSTRAINT uq_payment_outbox_events_event_id UNIQUE (event_id)
-        );
-        ALTER TABLE payment_outbox_events ENABLE ROW LEVEL SECURITY;
-        ALTER TABLE payment_outbox_events FORCE ROW LEVEL SECURITY;
-        """
-    )
+    """Outbox table schema and RLS are strictly managed by migration 037 / bootstrap DDL."""
+    pass
 
 
 def _get_inbox_projection_url() -> str:
