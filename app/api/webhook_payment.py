@@ -7,6 +7,20 @@ from aiohttp import web
 
 logger = logging.getLogger("boontrack.webhook")
 
+# Supabase Client Initialization (Fail-Closed & Principle of Least Privilege)
+supabase_url = os.getenv("SUPABASE_URL", "").strip()
+supabase_anon_key = (os.getenv("SUPABASE_ANON_KEY") or os.getenv("SUPABASE_KEY", "")).strip()
+
+if not supabase_url or not supabase_anon_key:
+    raise RuntimeError(
+        "[SECURITY FAIL-CLOSED] Mandatory Supabase public configuration is missing in webhook_payment. "
+        "SUPABASE_URL and SUPABASE_ANON_KEY (or SUPABASE_KEY) must be provided in the environment."
+    )
+
+from app.core.security.test_isolation_guard import assert_disposable_supabase_url
+
+assert_disposable_supabase_url(supabase_url, allow_empty=False)
+
 _supabase_client = None
 
 
