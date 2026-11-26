@@ -1,0 +1,118 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "id": "boontrack-reserved-route-manifest-v1",
+  "version": "1.0.0",
+  "generated_at": "2026-11-26T00:00:00Z",
+  "contract": "BoonTrack Apex Domain Reserved Route Manifest (Single Source of Truth)",
+  "governance": {
+    "environment_scope": "Preview/Staging Only",
+    "production_hold": true,
+    "authority": "Platform Architecture & Ingress Boundary"
+  },
+  "normalization_rules": {
+    "case_sensitive": false,
+    "lowercase": true,
+    "trim": true,
+    "strip_trailing_slash": true,
+    "reject_percent_encoded_separators": true,
+    "reject_path_traversal": true,
+    "reject_double_slashes": true,
+    "segment_aware_matching": true
+  },
+  "namespaces": {
+    "corporate": [
+      "about",
+      "architecture",
+      "blog",
+      "careers",
+      "contact",
+      "news"
+    ],
+    "legal": [
+      "anti-spam",
+      "cookies",
+      "data-deletion",
+      "legal",
+      "privacy",
+      "privacy-policy",
+      "refund",
+      "terms"
+    ],
+    "platform": [
+      "app",
+      "foundry",
+      "platform",
+      "products",
+      "sms"
+    ],
+    "tricore": [
+      "creator",
+      "shop",
+      "studio"
+    ],
+    "documentation": [
+      "api",
+      "developers",
+      "docs",
+      "llms.txt"
+    ],
+    "operations": [
+      "health",
+      "robots.txt",
+      "sitemap.xml",
+      "status",
+      "support"
+    ],
+    "commercial": [
+      "partners",
+      "pricing"
+    ],
+    "system_and_internal": [
+      "admin",
+      "auth",
+      "login",
+      "register",
+      "test-onlineboost"
+    ]
+  },
+  "reserved_slugs": [
+    "about",
+    "admin",
+    "anti-spam",
+    "api",
+    "app",
+    "architecture",
+    "auth",
+    "blog",
+    "careers",
+    "contact",
+    "cookies",
+    "creator",
+    "data-deletion",
+    "developers",
+    "docs",
+    "foundry",
+    "health",
+    "legal",
+    "llms.txt",
+    "login",
+    "news",
+    "partners",
+    "platform",
+    "pricing",
+    "privacy",
+    "privacy-policy",
+    "products",
+    "refund",
+    "register",
+    "robots.txt",
+    "shop",
+    "sitemap.xml",
+    "sms",
+    "status",
+    "studio",
+    "support",
+    "terms",
+    "test-onlineboost"
+  ]
+}
