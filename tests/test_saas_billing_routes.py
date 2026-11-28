@@ -70,6 +70,7 @@ class TestSaaSBillingRoutesFailClosed(unittest.IsolatedAsyncioTestCase):
             "SAAS_XENDIT_SANDBOX_SECRET_KEY": "onlineboost_secret_key_123456",
             "SAAS_XENDIT_SANDBOX_CALLBACK_TOKEN": "saas_sandbox_callback_token_123456",
             "SAAS_XENDIT_SANDBOX_BUSINESS_ID": "business_saas_staging",
+            "SAAS_XENDIT_SANDBOX_WEBHOOK_URL": "https://api-staging.boontrack.com/api/v1/saas-billing/webhooks/xendit",
             "XENDIT_SECRET_KEY": "onlineboost_secret_key_123456",
         }
         with self.assertRaisesRegex(SaaSXenditProfileError, "BILLING_ONLINEBOOST_CREDENTIAL_REUSE_FORBIDDEN"):
