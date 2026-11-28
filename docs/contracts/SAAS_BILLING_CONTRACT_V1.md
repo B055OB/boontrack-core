@@ -226,4 +226,11 @@ Errors must not expose secret refs, plaintext provider responses, or internal cr
 
 ## 13. Implementation status at this revision
 
-This contract is the implementation target. The current branch first establishes the catalog/price boundary and request/quote data contract. End-to-end route, provider adapter, webhook transaction, ledger tables, entitlement consumer, worker, automated test execution and non-production Preview evidence remain separate gates. No claim of build/typecheck/test PASS is made by this document.
+This contract is the implementation target. The current branch contains:
+- app/schemas/saas_billing.py — typed request/quote contract;
+- app/services/saas_billing_catalog.py — Shop/Studio catalog map and deterministic quote calculation;
+- app/services/saas_billing_auth.py — product-scoped server-to-server HMAC boundary;
+- migrations/038_core_saas_billing_contract_v1.sql — draft Core-owned purchase, webhook, ledger and entitlement-event tables;
+- tests/test_saas_billing_catalog.py and tests/test_saas_billing_auth.py — automated cases authored, not yet executed.
+
+Still outstanding: registered HTTP routes, durable purchase/payment-intent orchestration, sandbox Xendit adapter and platform credential-profile resolution, verified webhook settlement transaction, shared outbox dispatch/entitlement consumer, recovery worker, integration tests, local build/typecheck, and source-SHA Preview evidence. The draft migration has not been applied to any database. SAAS_BILLING_LIVE_ENABLED remains false. No claim of build/typecheck/test PASS is made by this document.
