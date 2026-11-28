@@ -136,6 +136,7 @@ class SaaSQuote:
     lines: Tuple[SaaSQuoteLine, ...]
     subtotal_idr: int
     tax_status: str
-    total_idr: int
+    tax_amount_idr: int | None
+    total_idr: int | None
     quote_status: str
     payment_intent_allowed: bool
