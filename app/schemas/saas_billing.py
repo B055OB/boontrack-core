@@ -36,6 +36,7 @@ class BillingCadence(str, Enum):
     FREE = "FREE"
     ONE_TIME = "ONE_TIME"
     MONTHLY = "MONTHLY"
+    ANNUAL = "ANNUAL"
     LIFETIME = "LIFETIME"
 
 
@@ -133,6 +134,7 @@ class SaaSQuoteLine:
     entitlement_key: str
     credit_units: int = 0
     credit_validity_months: int | None = None
+    entitlement_validity_days: int | None = None
 
 
 @dataclass(frozen=True)
