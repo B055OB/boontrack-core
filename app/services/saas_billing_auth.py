@@ -74,6 +74,9 @@ def verify_internal_saas_billing_request(
     request_reference = str(quote_request.request_reference or "").strip()
     if not request_reference:
         raise SaaSBillingAuthorizationError("BILLING_REQUEST_REFERENCE_REQUIRED", 422)
+    idempotency_key = str(quote_request.idempotency_key or "").strip()
+    if not idempotency_key:
+        raise SaaSBillingAuthorizationError("BILLING_IDEMPOTENCY_KEY_REQUIRED", 422)
 
     if db_connection_factory is None:
         from app.core.database import get_db_connection
