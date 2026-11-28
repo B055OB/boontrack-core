@@ -10,7 +10,13 @@ import argparse
 import json
 import os
 import sys
+from pathlib import Path
 from urllib.parse import urlparse
+
+# Allow direct execution via `python scripts/...py` from repository root.
+REPOSITORY_ROOT = str(Path(__file__).resolve().parents[1])
+if REPOSITORY_ROOT not in sys.path:
+    sys.path.insert(0, REPOSITORY_ROOT)
 
 
 REQUIRED_TABLES = {
