@@ -4,6 +4,48 @@
 
 BEGIN;
 
+-- Helper functions for safe tenant resolution (idempotent with Migration 027)
+CREATE OR REPLACE FUNCTION public.try_cast_uuid(p_val text)
+RETURNS uuid
+LANGUAGE plpgsql
+IMMUTABLE
+PARALLEL SAFE
+AS $$
+BEGIN
+    IF p_val IS NULL OR p_val = '' THEN
+        RETURN NULL;
+    END IF;
+    IF p_val ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' THEN
+        RETURN p_val::uuid;
+    END IF;
+    RETURN NULL;
+EXCEPTION WHEN others THEN
+    RETURN NULL;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION public.current_app_tenant_uuid()
+RETURNS uuid
+LANGUAGE plpgsql
+STABLE
+PARALLEL SAFE
+AS $$
+DECLARE
+    v_val text;
+BEGIN
+    v_val := NULLIF(current_setting('app.current_tenant_id', true), '');
+    IF v_val IS NULL THEN
+        RETURN NULL;
+    END IF;
+    IF v_val ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' THEN
+        RETURN v_val::uuid;
+    END IF;
+    RETURN (SELECT id FROM public.tenants WHERE slug = v_val LIMIT 1);
+EXCEPTION WHEN others THEN
+    RETURN NULL;
+END;
+$$;
+
 CREATE TABLE IF NOT EXISTS public.saas_billing_purchases (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     canonical_tenant_id UUID NOT NULL REFERENCES public.tenants(id) ON DELETE RESTRICT,
@@ -121,6 +163,7 @@ CREATE TABLE IF NOT EXISTS public.saas_billing_entitlement_events (
 CREATE INDEX IF NOT EXISTS idx_saas_entitlement_tenant_status
     ON public.saas_billing_entitlement_events (canonical_tenant_id, event_status, created_at DESC);
 
+-- R2: Immutable Ledger Mutation Protection (Row-level BEFORE UPDATE OR DELETE)
 CREATE OR REPLACE FUNCTION public.reject_saas_billing_ledger_mutation()
 RETURNS TRIGGER
 LANGUAGE plpgsql
@@ -134,6 +177,21 @@ CREATE TRIGGER trg_saas_billing_ledger_no_update
     BEFORE UPDATE OR DELETE ON public.saas_billing_ledger_entries
     FOR EACH ROW EXECUTE FUNCTION public.reject_saas_billing_ledger_mutation();
 
+-- R2: Immutable Ledger Truncate Protection (Statement-level BEFORE TRUNCATE)
+CREATE OR REPLACE FUNCTION public.reject_saas_billing_ledger_truncate()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+AS $$
+BEGIN
+    RAISE EXCEPTION 'SAAS_BILLING_LEDGER_APPEND_ONLY: truncate is strictly prohibited on immutable ledger';
+END;
+$$;
+DROP TRIGGER IF EXISTS trg_saas_billing_ledger_no_truncate ON public.saas_billing_ledger_entries;
+CREATE TRIGGER trg_saas_billing_ledger_no_truncate
+    BEFORE TRUNCATE ON public.saas_billing_ledger_entries
+    FOR EACH STATEMENT EXECUTE FUNCTION public.reject_saas_billing_ledger_truncate();
+
+-- R1: Enable & Force Row Level Security on all Core SaaS Billing tables
 ALTER TABLE public.saas_billing_purchases ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.saas_billing_purchases FORCE ROW LEVEL SECURITY;
 ALTER TABLE public.saas_billing_webhook_events ENABLE ROW LEVEL SECURITY;
@@ -143,33 +201,148 @@ ALTER TABLE public.saas_billing_ledger_entries FORCE ROW LEVEL SECURITY;
 ALTER TABLE public.saas_billing_entitlement_events ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.saas_billing_entitlement_events FORCE ROW LEVEL SECURITY;
 
+-- R1 & R2: Least-privilege grants, TRUNCATE revocation, and Tenant Isolation RLS Policies
 DO $$
 DECLARE
-    table_name TEXT;
-    policy_name TEXT;
+    tbl TEXT;
 BEGIN
+    -- Revoke TRUNCATE and default grants from PUBLIC and anon across all 4 tables
+    FOREACH tbl IN ARRAY ARRAY[
+        'saas_billing_purchases',
+        'saas_billing_webhook_events',
+        'saas_billing_ledger_entries',
+        'saas_billing_entitlement_events'
+    ]
+    LOOP
+        EXECUTE format('REVOKE ALL ON TABLE public.%I FROM PUBLIC', tbl);
+        IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'anon') THEN
+            EXECUTE format('REVOKE ALL ON TABLE public.%I FROM anon', tbl);
+        END IF;
+    END LOOP;
+
+    -- DML tables: least-privilege grants (SELECT, INSERT, UPDATE, DELETE - NO TRUNCATE)
+    FOREACH tbl IN ARRAY ARRAY[
+        'saas_billing_purchases',
+        'saas_billing_webhook_events',
+        'saas_billing_entitlement_events'
+    ]
+    LOOP
+        IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'authenticated') THEN
+            EXECUTE format('GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.%I TO authenticated', tbl);
+            EXECUTE format('REVOKE TRUNCATE ON TABLE public.%I FROM authenticated', tbl);
+        END IF;
+        IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'service_role') THEN
+            EXECUTE format('GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.%I TO service_role', tbl);
+            EXECUTE format('REVOKE TRUNCATE ON TABLE public.%I FROM service_role', tbl);
+        END IF;
+    END LOOP;
+
+    -- Immutable ledger: append-only (SELECT, INSERT only - NO UPDATE, NO DELETE, NO TRUNCATE)
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'authenticated') THEN
+        EXECUTE 'GRANT SELECT, INSERT ON TABLE public.saas_billing_ledger_entries TO authenticated';
+        EXECUTE 'REVOKE UPDATE, DELETE, TRUNCATE ON TABLE public.saas_billing_ledger_entries FROM authenticated';
+    END IF;
     IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'service_role') THEN
-        FOREACH table_name IN ARRAY ARRAY[
-            'saas_billing_purchases',
-            'saas_billing_webhook_events',
-            'saas_billing_ledger_entries',
-            'saas_billing_entitlement_events'
-        ]
-        LOOP
-            policy_name := 'service_role_all_' || table_name;
-            IF NOT EXISTS (
-                SELECT 1 FROM pg_policies
-                WHERE schemaname = 'public'
-                  AND tablename = table_name
-                  AND policyname = policy_name
-            ) THEN
-                EXECUTE format(
-                    'CREATE POLICY %I ON public.%I AS PERMISSIVE FOR ALL TO service_role USING (true) WITH CHECK (true)',
-                    policy_name, table_name
-                );
-            END IF;
-            EXECUTE format('GRANT ALL ON TABLE public.%I TO service_role', table_name);
-        END LOOP;
+        EXECUTE 'GRANT SELECT, INSERT ON TABLE public.saas_billing_ledger_entries TO service_role';
+        EXECUTE 'REVOKE UPDATE, DELETE, TRUNCATE ON TABLE public.saas_billing_ledger_entries FROM service_role';
+    END IF;
+
+    -- Policies for authenticated (tenant-scoped via app.current_tenant_id)
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'authenticated') THEN
+        DROP POLICY IF EXISTS auth_tenant_saas_billing_purchases ON public.saas_billing_purchases;
+        CREATE POLICY auth_tenant_saas_billing_purchases ON public.saas_billing_purchases
+            AS PERMISSIVE FOR ALL TO authenticated
+            USING (
+                public.current_app_tenant_uuid() IS NOT NULL
+                AND canonical_tenant_id = public.current_app_tenant_uuid()
+            )
+            WITH CHECK (
+                public.current_app_tenant_uuid() IS NOT NULL
+                AND canonical_tenant_id = public.current_app_tenant_uuid()
+            );
+
+        DROP POLICY IF EXISTS auth_tenant_saas_billing_webhook_events ON public.saas_billing_webhook_events;
+        CREATE POLICY auth_tenant_saas_billing_webhook_events ON public.saas_billing_webhook_events
+            AS PERMISSIVE FOR ALL TO authenticated
+            USING (
+                public.current_app_tenant_uuid() IS NOT NULL
+                AND purchase_id IN (
+                    SELECT p.id FROM public.saas_billing_purchases p
+                    WHERE p.canonical_tenant_id = public.current_app_tenant_uuid()
+                )
+            )
+            WITH CHECK (
+                public.current_app_tenant_uuid() IS NOT NULL
+                AND purchase_id IN (
+                    SELECT p.id FROM public.saas_billing_purchases p
+                    WHERE p.canonical_tenant_id = public.current_app_tenant_uuid()
+                )
+            );
+
+        DROP POLICY IF EXISTS auth_tenant_saas_billing_ledger_entries_select ON public.saas_billing_ledger_entries;
+        CREATE POLICY auth_tenant_saas_billing_ledger_entries_select ON public.saas_billing_ledger_entries
+            AS PERMISSIVE FOR SELECT TO authenticated
+            USING (
+                public.current_app_tenant_uuid() IS NOT NULL
+                AND canonical_tenant_id = public.current_app_tenant_uuid()
+            );
+
+        DROP POLICY IF EXISTS auth_tenant_saas_billing_ledger_entries_insert ON public.saas_billing_ledger_entries;
+        CREATE POLICY auth_tenant_saas_billing_ledger_entries_insert ON public.saas_billing_ledger_entries
+            AS PERMISSIVE FOR INSERT TO authenticated
+            WITH CHECK (
+                public.current_app_tenant_uuid() IS NOT NULL
+                AND canonical_tenant_id = public.current_app_tenant_uuid()
+            );
+
+        DROP POLICY IF EXISTS auth_tenant_saas_billing_entitlement_events ON public.saas_billing_entitlement_events;
+        CREATE POLICY auth_tenant_saas_billing_entitlement_events ON public.saas_billing_entitlement_events
+            AS PERMISSIVE FOR ALL TO authenticated
+            USING (
+                public.current_app_tenant_uuid() IS NOT NULL
+                AND canonical_tenant_id = public.current_app_tenant_uuid()
+            )
+            WITH CHECK (
+                public.current_app_tenant_uuid() IS NOT NULL
+                AND canonical_tenant_id = public.current_app_tenant_uuid()
+            );
+    END IF;
+
+    -- Policies for service_role (privileged bypass)
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'service_role') THEN
+        DROP POLICY IF EXISTS service_role_all_saas_billing_purchases ON public.saas_billing_purchases;
+        CREATE POLICY service_role_all_saas_billing_purchases ON public.saas_billing_purchases
+            AS PERMISSIVE FOR ALL TO service_role USING (true) WITH CHECK (true);
+
+        DROP POLICY IF EXISTS service_role_all_saas_billing_webhook_events ON public.saas_billing_webhook_events;
+        CREATE POLICY service_role_all_saas_billing_webhook_events ON public.saas_billing_webhook_events
+            AS PERMISSIVE FOR ALL TO service_role USING (true) WITH CHECK (true);
+
+        DROP POLICY IF EXISTS service_role_all_saas_billing_ledger_entries ON public.saas_billing_ledger_entries;
+        CREATE POLICY service_role_all_saas_billing_ledger_entries ON public.saas_billing_ledger_entries
+            AS PERMISSIVE FOR ALL TO service_role USING (true) WITH CHECK (true);
+
+        DROP POLICY IF EXISTS service_role_all_saas_billing_entitlement_events ON public.saas_billing_entitlement_events;
+        CREATE POLICY service_role_all_saas_billing_entitlement_events ON public.saas_billing_entitlement_events
+            AS PERMISSIVE FOR ALL TO service_role USING (true) WITH CHECK (true);
+    END IF;
+
+    -- Function execution grants
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'authenticated') THEN
+        EXECUTE 'GRANT EXECUTE ON FUNCTION public.try_cast_uuid(text) TO authenticated';
+        EXECUTE 'GRANT EXECUTE ON FUNCTION public.current_app_tenant_uuid() TO authenticated';
+        EXECUTE 'GRANT EXECUTE ON FUNCTION public.reject_saas_billing_ledger_mutation() TO authenticated';
+        EXECUTE 'GRANT EXECUTE ON FUNCTION public.reject_saas_billing_ledger_truncate() TO authenticated';
+    END IF;
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'service_role') THEN
+        EXECUTE 'GRANT EXECUTE ON FUNCTION public.try_cast_uuid(text) TO service_role';
+        EXECUTE 'GRANT EXECUTE ON FUNCTION public.current_app_tenant_uuid() TO service_role';
+        EXECUTE 'GRANT EXECUTE ON FUNCTION public.reject_saas_billing_ledger_mutation() TO service_role';
+        EXECUTE 'GRANT EXECUTE ON FUNCTION public.reject_saas_billing_ledger_truncate() TO service_role';
+    END IF;
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'anon') THEN
+        EXECUTE 'GRANT EXECUTE ON FUNCTION public.try_cast_uuid(text) TO anon';
+        EXECUTE 'GRANT EXECUTE ON FUNCTION public.current_app_tenant_uuid() TO anon';
     END IF;
 END;
 $$;

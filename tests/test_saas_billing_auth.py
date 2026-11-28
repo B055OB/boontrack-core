@@ -13,7 +13,7 @@ from app.services.saas_billing_catalog import TaxPolicy, quote_catalog_items
 def _shop_request_and_quote():
     request = SaaSQuoteRequest.from_mapping({
         "product": "STUDIO",
-        "items": [{"sku": "STUDIO_TOPUP_KETENGAN_50"}],
+        "items": [{"sku": "STUDIO-MONTHLY-29K"}],
         "request_reference": "saas-test-purchase-001",
         "idempotency_key": "saas-test-idem-0001",
     })
@@ -73,7 +73,7 @@ class TestSaaSBillingAuth(unittest.TestCase):
         )
         self.assertEqual(
             verify.call_args.kwargs["derived_amount"],
-            27500,
+            31900,
         )
 
     @patch("app.core.security.payment_auth_guard.verify_stage2_payment_initiation_request")
