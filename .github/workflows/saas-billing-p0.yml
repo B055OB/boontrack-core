@@ -84,6 +84,7 @@ jobs:
           sudo service redis-server start
           sudo -u postgres psql -tAc "SELECT 1 FROM pg_roles WHERE rolname='test_user'" | grep -q 1 || sudo -u postgres psql -v ON_ERROR_STOP=1 -c "CREATE ROLE test_user LOGIN PASSWORD 'test_password';"
           sudo -u postgres psql -v ON_ERROR_STOP=1 -c "ALTER ROLE test_user WITH PASSWORD 'test_password';"
+          sudo -u postgres psql -v ON_ERROR_STOP=1 -c "ALTER ROLE test_user CREATEROLE;"
           sudo -u postgres psql -tAc "SELECT 1 FROM pg_database WHERE datname='test_boontrack'" | grep -q 1 || sudo -u postgres createdb -O test_user test_boontrack
           python scripts/init_test_postgres_schema.py
           redis-cli ping
