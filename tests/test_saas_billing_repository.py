@@ -1,6 +1,6 @@
 import unittest
 
-from app.schemas.saas_billing import SaaSProduct
+from app.schemas.saas_billing import SaaSProduct, SaaSQuoteLineRequest
 from app.services.saas_billing_catalog import TaxPolicy, quote_catalog_items
 from app.services.saas_billing_repository import (
     SaaSBillingRepository,
@@ -12,12 +12,7 @@ class TestSaaSBillingRepositoryFailClosed(unittest.TestCase):
     def setUp(self):
         self.quote = quote_catalog_items(
             product=SaaSProduct.STUDIO,
-            items=[
-                __import__(
-                    "app.schemas.saas_billing",
-                    fromlist=["SaaSQuoteLineRequest"],
-                ).SaaSQuoteLineRequest(sku="STUDIO-ANNUAL-99K")
-            ],
+            items=[SaaSQuoteLineRequest(sku="STUDIO-ANNUAL-99K")],
             tax_policy=TaxPolicy(
                 status="APPROVED",
                 mode="EXCLUSIVE",
@@ -52,12 +47,7 @@ class TestSaaSBillingRepositoryFailClosed(unittest.TestCase):
     def test_purchase_rejects_pending_tax_policy_before_database_access(self):
         pending_quote = quote_catalog_items(
             product=SaaSProduct.STUDIO,
-            items=self.quote.lines and [
-                __import__(
-                    "app.schemas.saas_billing",
-                    fromlist=["SaaSQuoteLineRequest"],
-                ).SaaSQuoteLineRequest(sku="STUDIO-ANNUAL-99K")
-            ],
+            items=[SaaSQuoteLineRequest(sku="STUDIO-ANNUAL-99K")],
         )
         repository = SaaSBillingRepository(connection_factory=lambda: None)
         with self.assertRaisesRegex(ValueError, "BILLING_QUOTE_NOT_SETTLEMENT_READY"):
