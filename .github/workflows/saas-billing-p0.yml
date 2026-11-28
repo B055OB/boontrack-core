@@ -14,29 +14,6 @@ jobs:
     name: Verify SaaS catalog, legacy Team Scale, and targeted typing
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    services:
-      postgres:
-        image: postgres:15
-        env:
-          POSTGRES_USER: test_user
-          POSTGRES_PASSWORD: test_password
-          POSTGRES_DB: test_boontrack
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-      redis:
-        image: redis:7-alpine
-        ports:
-          - 6379:6379
-        options: >-
-          --health-cmd "redis-cli ping"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
     env:
       APP_ENV: test
       ENV: test
@@ -98,6 +75,18 @@ jobs:
           python -m pip install --upgrade pip
           pip install --prefer-binary -r requirements.txt
           pip install pytest mypy
+
+      - name: Start runner-local disposable PostgreSQL and Redis
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y postgresql redis-server
+          sudo service postgresql start
+          sudo service redis-server start
+          sudo -u postgres psql -v ON_ERROR_STOP=1 -c "DO \\$\\$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'test_user') THEN CREATE ROLE test_user LOGIN PASSWORD 'test_password'; END IF; END \\$\\$;"
+          sudo -u postgres psql -v ON_ERROR_STOP=1 -c "ALTER ROLE test_user WITH PASSWORD 'test_password';"
+          sudo -u postgres psql -tAc "SELECT 1 FROM pg_database WHERE datname='test_boontrack'" | grep -q 1 || sudo -u postgres createdb -O test_user test_boontrack
+          python scripts/init_test_postgres_schema.py
+          redis-cli ping
 
       - name: Verify catalog and existing Team Scale regression tests
         run: |
