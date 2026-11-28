@@ -100,4 +100,4 @@ jobs:
 
       - name: Typecheck SaaS billing schema and catalog
         run: |
-          mypy --follow-imports=silent --ignore-missing-imports app/schemas/saas_billing.py app/services/saas_billing_catalog.py app/services/saas_billing_auth.py app/services/saas_billing_repository.py app/routes/saas_billing_routes.py
+          mypy --follow-imports=silent --ignore-missing-imports app/schemas/saas_billing.py app/services/saas_billing_catalog.py app/services/saas_billing_auth.py app/services/saas_billing_repository.py app/services/saas_billing_xendit.py app/routes/saas_billing_routes.py
