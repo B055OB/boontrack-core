@@ -66,7 +66,7 @@ Shop sellable Staging catalog:
 - Booking Pro: Rp49,000 monthly.
 - WABA Official: Rp149,000 monthly; Meta fees are a separate pass-through and are not included in this SKU price.
 
-Shop Team Scale (Rp499,000 proposal), WhatsApp Non-WABA / Scan Barcode, Frontpage E-Commerce/Microsite/Web Profile templates, Affiliate Domain, and Offline Event Upload are HOLD. They are absent from the purchasable catalog; do not create active SKUs, checkout controls, or upsells for them.
+Shop Team Scale is an existing Tier 4 subscription at Rp499,000/month. It remains sellable in the catalog as `TEAM_SCALE` and retains the existing canonical `ENTERPRISE` entitlement mapping used by legacy subscription logic. Existing customer subscription rows, renewals, entitlement state, and billing history must remain intact; do not reset, rewrite, or migrate them as part of this delta. This catalog entry is an adapter to the existing tier, not a replacement subscription system. The six HOLD categories remain strictly non-purchasable: WhatsApp Non-WABA / Scan Barcode; Frontpage E-Commerce, Microsite, and Web Profile templates; Affiliate Domain; and Offline Event Upload. They must remain absent from the purchasable catalog, checkout controls, and upsells.
 
 The Founder directive does not specify the exact entitlement inclusions of Starter or Ads Performance. Until Product ratifies a tier-to-add-on inclusion map, Core rejects a quote combining a Shop package/base tier and any standalone add-on with `BILLING_BUNDLE_MAPPING_PENDING`. Repeated entitlement keys are also rejected. This is a quote-level fail-closed guard, not yet a substitute for checking existing effective tenant entitlements in the durable repository before intent creation.
 
