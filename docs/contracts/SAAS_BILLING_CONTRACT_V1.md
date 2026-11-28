@@ -20,12 +20,19 @@ Implemented in the feature branch:
 
 Not yet verified or available as a staging API:
 - CI P0 must pass on the latest branch HEAD, including catalog, legacy Team Scale, repository fail-closed tests, and targeted typecheck.
-- Migration 038 has not been applied to any database; the repository cannot run until the required Core-owned tables exist in the target staging database.
+- Migration 038 has been applied only to a disposable GitHub Actions CI database for schema/test verification; it has not been applied to Staging or Production. The repository cannot run against Staging until the required Core-owned tables exist there under separate authorization.
 - FastAPI route registration and server-to-server API responses are not yet implemented.
 - SaaS-specific Xendit profile binding/adapter orchestration, SaaS webhook receiver, verified SaaS settlement transaction, ledger writer, entitlement activation consumer, and recovery worker are not yet wired. Core already has a generic Xendit adapter and webhook/payment primitives on main; see Section 6.1 for mandatory reuse boundaries.
 - No Shop, Creator, or Studio UI candidate may assume these endpoints are reachable. Until a later CCC handover explicitly marks the contract READY, consumers must fail closed and must not create local payment intents or activate entitlements.
 
 The API paths in Section 4 are target paths, not a statement of deployed endpoint availability. TAX_POLICY_PENDING remains a hard payment-intent gate.
+
+## 0.2 P0/P1 closure evidence — 28 Nov 2026
+
+- **P0 prior run `46133764556`: FAIL (20 passed, 2 failed).** PostgreSQL bootstrap, disposable Migration 038 application, and Redis startup succeeded. Both failures were async tests in `tests/test_subscription_pricing.py` because `pytest-asyncio` was absent; the Team Scale/catalog assertions were among the passing synchronous tests. Mypy was skipped after pytest failed.
+- **P0 corrective change:** workflow dependency `pytest-asyncio` added in commit `0d8dbf9ec3fef7354d50483afbb5e062b3781002`. A new push run is expected from subsequent branch commits; its final result must be read from Actions before P0 is marked PASS. This document does not claim that rerun passed.
+- **P1 repository source:** `app/services/saas_billing_repository.py` provides PostgreSQL-only purchase reservation, advisory-lock idempotency, shared payment-intent + purchase + outbox writes in one transaction, rollback on failure, and read-only legacy entitlement lookup. No in-memory fallback is used.
+- **P1 test coverage currently present:** three repository tests cover database-unavailable fail-closed behavior, entitlement lookup fail-closed behavior, and rejection of `TAX_POLICY_PENDING` before DB access. They do **not** yet prove real PostgreSQL same-key replay, changed-payload conflict, transaction rollback atomicity, or legacy Team Scale entitlement lookup. P1 is therefore source-implemented but not closed.
 
 ## 1. Purpose and authority
 
@@ -304,4 +311,4 @@ This contract is the implementation target. The current branch contains:
 - migrations/038_core_saas_billing_contract_v1.sql — draft Core-owned purchase, webhook, ledger and entitlement-event tables;
 - tests/test_saas_billing_catalog.py and tests/test_saas_billing_auth.py — automated cases authored, not yet executed.
 
-Still outstanding: registered HTTP routes, durable purchase/payment-intent orchestration with effective-tenant-entitlement checks, sandbox Xendit adapter and platform credential-profile resolution, verified webhook settlement transaction, shared outbox dispatch/entitlement consumer, recovery worker, integration tests, local build/typecheck, and source-SHA Preview evidence. Product must ratify the exact entitlements included in each Shop tier and the channel/agent/quota/provider definitions for SmartChatbox before the bundle guard can be relaxed. The draft migration has not been applied to any database. SAAS_BILLING_LIVE_ENABLED remains false. No claim of build/typecheck/test PASS is made by this document.
+Still outstanding: registered HTTP routes, durable purchase/payment-intent orchestration with effective-tenant-entitlement checks, sandbox Xendit adapter and platform credential-profile resolution, verified webhook settlement transaction, shared outbox dispatch/entitlement consumer, recovery worker, integration tests, local build/typecheck, and source-SHA Preview evidence. Product must ratify the exact entitlements included in each Shop tier and the channel/agent/quota/provider definitions for SmartChatbox before the bundle guard can be relaxed. The draft migration has only been applied to disposable CI for verification and has not been applied to Staging or Production. SAAS_BILLING_LIVE_ENABLED remains false. No claim of build/typecheck/test PASS is made by this document.
