@@ -109,6 +109,25 @@ The following is the target server-to-server contract. Paths are versioned and o
 
 Mutation routes require authenticated product server identity plus verified principal/tenant authorization, or an approved Core operator identity for recovery. Provider callbacks use a separate provider authentication path and cannot use merchant session authentication.
 
+### 4.0 Endpoint readiness and consumer contract — 28 Nov 2026
+
+**Current implementation status for every route below: NOT IMPLEMENTED (contract published; no FastAPI route is registered).** These definitions are safe for Shop and Studio UI integration against typed client interfaces, but they are not reachable staging APIs. Do not substitute mocks or local payment-intent creation. All transaction mutations remain fail-closed until a separate CCC handover confirms route deployment and staging smoke tests.
+
+| Method and path | Consumer / purpose | Authentication | Request schema | Success response | Current status |
+|---|---|---|---|---|---|
+| GET `/api/v1/saas-billing/catalog?product=SHOP\|STUDIO` | Shop or Studio server; retrieve sellable catalog | Product-scoped server-to-server HMAC identity; tenant context resolved from authenticated service principal | Query: `product` enum; optional `catalog_version` | `{catalog_version, product, currency: "IDR", items:[{sku, display_name, item_kind, cadence, amount_idr, validity_days, entitlement_key, credit_units, sellable, dependency_keys}]}` | NOT IMPLEMENTED |
+| POST `/api/v1/saas-billing/quotes` | Shop or Studio server; server-side quote | Product-scoped HMAC; verified principal, canonical tenant membership and billing permission | `{product, items:[{sku, quantity}], catalog_version?, request_reference, idempotency_key}`; no amount, tenant, tax or provider input | `{quote_id, canonical_tenant_id, product, catalog_version, lines:[...], subtotal_idr, tax_status, tax_amount_idr, total_idr, currency, expires_at, quote_status, payment_intent_allowed}` | NOT IMPLEMENTED; quote primitive exists in branch only |
+| POST `/api/v1/saas-billing/payment-intents` | Shop or Studio server; reserve Core purchase and initiate provider checkout | Product-scoped HMAC; quote owner/principal/tenant binding; Idempotency-Key must match signed body | `{product, quote_id, request_reference, idempotency_key}`; amount/provider/credential/tenant fields prohibited | `{purchase_id, payment_intent_id, status, provider:"XENDIT", checkout_url, expires_at, reused}`; checkout_url only after provider create succeeds | NOT IMPLEMENTED; PostgreSQL repository source exists but is not wired to route/provider |
+| GET `/api/v1/saas-billing/payment-intents/{intent_id}` | Shop or Studio server; retrieve authoritative payment status | Product-scoped HMAC; same tenant/product scope as purchase | Path: Core intent ID; no client-supplied tenant override | `{payment_intent_id, purchase_id, product, status, amount_idr, currency, provider_reference, checkout_url?, expires_at, settled_at?}` | NOT IMPLEMENTED |
+| POST `/api/v1/saas-billing/webhooks/xendit` | Xendit callback to Core | Provider callback token verification using configured Xendit callback token; verify event/reference/account and persisted amount/currency. No browser/session auth | Raw provider callback body + provider headers; retain provider event ID / webhook ID for deduplication | `{accepted:true, duplicate:boolean, event_id}` only after authenticated and durably handled; invalid/mismatched callbacks return stable error | NOT IMPLEMENTED; no adapter or callback handler |
+| POST `/api/v1/saas-billing/reconciliation/{intent_id}` | Core operator/recovery worker only | Core operator/service identity with explicit reconciliation permission; never exposed as consumer UI mutation | `{reason, correlation_id}`; provider identity and reference loaded from persisted intent | `{payment_intent_id, status, reconciliation_status, checked_at}` | NOT IMPLEMENTED |
+
+**Shared error envelope:** `{error:{code, message, request_id, retryable}}`. Stable codes and HTTP mappings are in Section 10. Responses must not include secret refs, credentials, raw provider payloads, or internal stack traces. Authentication/tenant errors are 401/403; unknown SKU 404; quote, tax, idempotency and settlement conflicts 409; persistence/provider/profile unavailability 503; quarantined late settlement and reconciliation-required outcomes 202.
+
+**Tax gate:** until an approved tax policy is supplied by Core, quote responses remain `tax_status=TAX_POLICY_PENDING`, `total_idr=null`, `payment_intent_allowed=false`; POST payment-intents returns `BILLING_TAX_POLICY_PENDING` (409). This is intentional, not a temporary UI mock state.
+
+**Consumer boundary:** Shop and Studio may implement catalog rendering, quote review UI, pending/error states, and typed API clients now. They must disable checkout submission and must not display a fabricated checkout URL. Creator has no SaaS billing endpoint in this contract; do not infer one from Shop or Studio routes.
+
 ### 4.1 Quote request
 
 Request fields:
