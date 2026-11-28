@@ -269,19 +269,22 @@ class TestSaaSBillingP0PostgresE2E(unittest.IsolatedAsyncioTestCase):
                 cur.execute(
                     """
                     CREATE OR REPLACE FUNCTION public.ci_force_saas_activation_outbox_failure()
-                    RETURNS trigger LANGUAGE plpgsql AS $
-                    BEGIN
-                        IF NEW.event_type = 'SAAS_ENTITLEMENTS_ACTIVATE_REQUESTED' THEN
-                            RAISE EXCEPTION 'CI_FORCED_SAAS_ACTIVATION_OUTBOX_FAILURE';
+                    RETURNS trigger LANGUAGE plpgsql AS 'BEGIN
+                        IF NEW.event_type = ''SAAS_ENTITLEMENTS_ACTIVATE_REQUESTED'' THEN
+                            RAISE EXCEPTION ''CI_FORCED_SAAS_ACTIVATION_OUTBOX_FAILURE'';
                         END IF;
                         RETURN NEW;
-                    END;
-                    $;
-                    DROP TRIGGER IF EXISTS ci_force_saas_activation_outbox_failure
-                        ON public.payment_outbox_events;
+                    END;'
+                    """
+                )
+                cur.execute(
+                    "DROP TRIGGER IF EXISTS ci_force_saas_activation_outbox_failure ON public.payment_outbox_events;"
+                )
+                cur.execute(
+                    """
                     CREATE TRIGGER ci_force_saas_activation_outbox_failure
-                        BEFORE INSERT ON public.payment_outbox_events
-                        FOR EACH ROW EXECUTE FUNCTION public.ci_force_saas_activation_outbox_failure();
+                    BEFORE INSERT ON public.payment_outbox_events
+                    FOR EACH ROW EXECUTE FUNCTION public.ci_force_saas_activation_outbox_failure();
                     """
                 )
             conn.commit()

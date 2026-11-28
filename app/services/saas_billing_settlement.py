@@ -101,10 +101,21 @@ class SaaSBillingSettlementRepository:
         currency = str(data.get("currency") or payload.get("currency") or "").strip().upper()
         if currency != "IDR":
             raise SaaSSettlementError("BILLING_PROVIDER_CURRENCY_MISMATCH")
-        amount = _strict_positive_int(
-            data.get("paid_amount") if data.get("paid_amount") is not None else (payload.get("paid_amount") if payload.get("paid_amount") is not None else (data.get("amount") if data.get("amount") is not None else payload.get("amount"))),
-            "BILLING_PROVIDER_AMOUNT_INVALID",
+        invoice_amount_raw = data.get("amount") if data.get("amount") is not None else payload.get("amount")
+        paid_amount_raw = data.get("paid_amount") if data.get("paid_amount") is not None else payload.get("paid_amount")
+        invoice_amount = (
+            _strict_positive_int(invoice_amount_raw, "BILLING_PROVIDER_AMOUNT_INVALID")
+            if invoice_amount_raw is not None else None
         )
+        paid_amount = (
+            _strict_positive_int(paid_amount_raw, "BILLING_PROVIDER_AMOUNT_INVALID")
+            if paid_amount_raw is not None else None
+        )
+        if invoice_amount is not None and paid_amount is not None and invoice_amount != paid_amount:
+            raise SaaSSettlementError("BILLING_PROVIDER_AMOUNT_MISMATCH", 409)
+        amount = paid_amount if paid_amount is not None else invoice_amount
+        if amount is None:
+            raise SaaSSettlementError("BILLING_PROVIDER_AMOUNT_INVALID")
         provider_event_id = f"{invoice_id}:PAID"
         if len(provider_event_id) > 180:
             raise SaaSSettlementError("BILLING_PROVIDER_EVENT_ID_INVALID")
