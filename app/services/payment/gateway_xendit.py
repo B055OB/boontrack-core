@@ -103,7 +103,16 @@ class XenditAdapter(PaymentAdapter):
 
         if "QRIS" in method or method == "DYNAMIC_QRIS":
             app_domain = os.getenv("APP_DOMAIN", "https://api.boontrack.com").rstrip("/")
-            resolved_callback = f"{app_domain}/api/v1/payments/xendit/callback"
+            requested_callback = str(meta.get("callback_url") or "").strip()
+            if requested_callback and not (
+                requested_callback.startswith("https://")
+                or (
+                    requested_callback.startswith("http://127.0.0.1")
+                    and os.getenv("APP_ENV", "").strip().lower() == "test"
+                )
+            ):
+                raise PaymentConfigurationError("INVALID_XENDIT_CALLBACK_URL")
+            resolved_callback = requested_callback or f"{app_domain}/api/v1/payments/xendit/callback"
 
             endpoint = f"{self.api_url}/qr_codes"
             headers = {
@@ -222,7 +231,12 @@ class XenditAdapter(PaymentAdapter):
             customer_phone=str(customer_phone or ""),
             description=(metadata or {}).get("product_name") or "Dynamic QRIS",
             payment_method="DYNAMIC_QRIS",
-            metadata={"tenant_id": tenant_id, "tenant_slug": tenant_id, **(metadata or {})},
+            metadata={
+                "tenant_id": tenant_id,
+                "tenant_slug": tenant_id,
+                **(metadata or {}),
+                **({"callback_url": callback_url} if callback_url else {}),
+            },
         )
         tx_resp = await self.create_transaction(req)
         raw = getattr(tx_resp, "raw_response", {}) or {}
