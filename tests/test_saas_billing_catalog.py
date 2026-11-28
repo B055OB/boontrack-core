@@ -68,6 +68,15 @@ class TestSaaSBillingCatalog(unittest.TestCase):
                 self.assertEqual((entry.amount_idr, entry.cadence), expected)
                 self.assertTrue(entry.sellable)
 
+    def test_existing_team_scale_tier4_is_sellable_and_keeps_enterprise_entitlement(self):
+        entry = get_catalog_entry(SaaSProduct.SHOP, "TEAM_SCALE")
+        self.assertEqual(entry.display_name, "Team Scale (Tier 4)")
+        self.assertEqual(entry.amount_idr, 499000)
+        self.assertEqual(entry.cadence, BillingCadence.MONTHLY)
+        self.assertEqual(entry.entitlement_key, "ENTERPRISE")
+        self.assertEqual(entry.item_kind.value, "SUBSCRIPTION")
+        self.assertTrue(entry.sellable)
+
     def test_shop_waba_meta_fees_are_pass_through_dependency(self):
         entry = get_catalog_entry(SaaSProduct.SHOP, "SHOP_ADDON_WABA_OFFICIAL")
         self.assertIn("META_FEES_PASS_THROUGH", entry.dependency_keys)
@@ -82,7 +91,6 @@ class TestSaaSBillingCatalog(unittest.TestCase):
 
     def test_hold_items_are_absent_from_purchasable_catalog(self):
         hold_skus = [
-            "SHOP_TEAM_SCALE",
             "SHOP_ADDON_WHATSAPP_NON_WABA",
             "SHOP_TEMPLATE_FRONT_PAGE_ECOMMERCE",
             "SHOP_TEMPLATE_FRONT_PAGE_MICROSITE",
