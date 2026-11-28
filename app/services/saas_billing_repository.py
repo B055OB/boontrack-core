@@ -190,9 +190,39 @@ class SaaSBillingRepository:
                 purchase = cur.fetchone()
                 if not purchase:
                     raise SaaSBillingRepositoryError("BILLING_PURCHASE_CREATE_FAILED")
+                purchase_id = str(purchase[0])
+                outbox_payload = {
+                    "purchase_id": purchase_id,
+                    "payment_intent_id": payment_intent_id,
+                    "product": product.value,
+                    "credential_profile_id": profile_id,
+                    "provider_environment": "sandbox",
+                }
+                cur.execute(
+                    """
+                    INSERT INTO public.payment_outbox_events (
+                        event_id, aggregate_id, event_type, payload,
+                        canonical_tenant_id, order_id, payment_intent_id,
+                        provider, idempotency_key, status, delivery_status
+                    ) VALUES (
+                        %s, %s, 'SAAS_PAYMENT_INTENT_CREATE_REQUESTED', %s::jsonb,
+                        %s, %s, %s, 'XENDIT', %s, 'PENDING', 'PENDING'
+                    )
+                    ON CONFLICT (idempotency_key) DO NOTHING;
+                    """,
+                    (
+                        "saas-payment-intent:" + purchase_id,
+                        purchase_id,
+                        json.dumps(outbox_payload, separators=(",", ":")),
+                        tenant_id,
+                        reference,
+                        payment_intent_id,
+                        "saas-intent:" + idem,
+                    ),
+                )
                 conn.commit()
                 return {
-                    "id": str(purchase[0]),
+                    "id": purchase_id,
                     "canonical_tenant_id": tenant_id,
                     "product": product.value,
                     "request_reference": reference,
