@@ -493,6 +493,8 @@ class CTWAStateEngine:
             "qr_id": xendit_qr_res.get("qr_id"),
             "invoice_url": invoice_url,
             "payment_provider": "XENDIT",
+            "provider": "XENDIT",
+            "credential_profile_id": "cred_onlineboost_xendit_prod_01",
             "ctwa_clid": ctwa_clid,
         }
         if attr_snapshot:

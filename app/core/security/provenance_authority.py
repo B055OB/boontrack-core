@@ -1760,6 +1760,70 @@ def _extract_row_field(row: Any, idx: int, key: str) -> Any:
     return row[idx]
 
 
+def _is_psycopg2_connection(conn: Any) -> bool:
+    """Returns True only for genuine psycopg2 connections (skipping mock test DBs)."""
+    mod = getattr(type(conn), "__module__", "") or ""
+    return "psycopg2" in mod
+
+
+def _detect_pg_settlement_schema_capabilities(cur: Any) -> Dict[str, bool]:
+    """Inspects live PostgreSQL columns/constraints once per transaction for safe schema compatibility."""
+    caps: Dict[str, bool] = {
+        "orders_has_amount": True,
+        "orders_has_sku_id": True,
+        "orders_has_fulfillment_status": True,
+        "pe_has_record_class": True,
+        "pe_has_s2s": True,
+        "pe_uq_provider_event": True,
+        "fl_has_tx_status": True,
+        "fl_has_recon_status": True,
+        "fl_fees_nullable": True,
+    }
+    cur.execute(
+        """
+        SELECT table_name, column_name, is_nullable
+        FROM information_schema.columns
+        WHERE table_schema = 'public'
+          AND table_name IN ('orders', 'payment_events', 'financial_ledger');
+        """
+    )
+    cols: Dict[str, Dict[str, str]] = {"orders": {}, "payment_events": {}, "financial_ledger": {}}
+    for row in cur.fetchall() or []:
+        t_name = str(_extract_row_field(row, 0, "table_name") or "")
+        c_name = str(_extract_row_field(row, 1, "column_name") or "")
+        nullable = str(_extract_row_field(row, 2, "is_nullable") or "").upper()
+        if t_name in cols:
+            cols[t_name][c_name] = nullable
+
+    caps["orders_has_amount"] = "amount" in cols["orders"]
+    caps["orders_has_sku_id"] = "sku_id" in cols["orders"]
+    caps["orders_has_fulfillment_status"] = "fulfillment_status" in cols["orders"]
+    caps["pe_has_record_class"] = "record_classification" in cols["payment_events"]
+    caps["pe_has_s2s"] = "s2s_verification_status" in cols["payment_events"]
+    caps["fl_has_tx_status"] = "transaction_status" in cols["financial_ledger"]
+    caps["fl_has_recon_status"] = "reconciliation_status" in cols["financial_ledger"]
+    caps["fl_fees_nullable"] = (
+        cols["financial_ledger"].get("fee_amount", "YES") == "YES"
+        and cols["financial_ledger"].get("net_amount", "YES") == "YES"
+    )
+
+    cur.execute(
+        """
+        SELECT indexdef
+        FROM pg_indexes
+        WHERE schemaname = 'public' AND tablename = 'payment_events';
+        """
+    )
+    has_uq_prov_ev = False
+    for row in cur.fetchall() or []:
+        idx_def = str(_extract_row_field(row, 0, "indexdef") or "").upper()
+        if "UNIQUE INDEX" in idx_def and "(PROVIDER, EVENT_ID)" in idx_def:
+            has_uq_prov_ev = True
+            break
+    caps["pe_uq_provider_event"] = has_uq_prov_ev
+    return caps
+
+
 def commit_verified_settlement_transaction(
     capability: VerifiedSettlementCapability,
     signer: ProvenanceSigner,
@@ -1867,20 +1931,41 @@ def commit_verified_settlement_transaction(
 
     try:
         cur = conn.cursor()
+        caps = (
+            _detect_pg_settlement_schema_capabilities(cur)
+            if _is_psycopg2_connection(conn)
+            else {
+                "orders_has_amount": True,
+                "orders_has_sku_id": True,
+                "orders_has_fulfillment_status": True,
+                "pe_has_record_class": True,
+                "pe_has_s2s": True,
+                "pe_uq_provider_event": True,
+                "fl_has_tx_status": True,
+                "fl_has_recon_status": True,
+                "fl_fees_nullable": True,
+            }
+        )
 
         # Step A: Row-level lock & canonical tenant join on orders
+        ord_gross_sql = "COALESCE(o.gross_amount, o.amount, 0)" if caps["orders_has_amount"] else "COALESCE(o.gross_amount, 0)"
+        ord_sku_sql = (
+            "COALESCE(NULLIF(TRIM(o.sku_id), ''), NULLIF(TRIM(o.product_id), ''), '')"
+            if caps["orders_has_sku_id"]
+            else "COALESCE(NULLIF(TRIM(o.product_id), ''), '')"
+        )
         cur.execute(
-            """
+            f"""
             SELECT
                 o.id,
                 o.tenant_id,
                 t.id::text AS canonical_tenant_id,
-                COALESCE(o.gross_amount, o.amount, 0) AS gross_amount,
-                COALESCE(NULLIF(TRIM(o.sku_id), ''), NULLIF(TRIM(o.product_id), ''), '') AS sku_id,
+                {ord_gross_sql} AS gross_amount,
+                {ord_sku_sql} AS sku_id,
                 COALESCE(UPPER(TRIM(o.status)), '') AS status,
                 COALESCE(UPPER(TRIM(o.payment_status)), '') AS payment_status
             FROM orders o
-            INNER JOIN tenants t ON o.tenant_id = t.id::text
+            INNER JOIN tenants t ON o.tenant_id::text = t.id::text
             WHERE o.id = %s
             FOR UPDATE OF o;
             """,
@@ -1889,9 +1974,10 @@ def commit_verified_settlement_transaction(
         order_row = cur.fetchone()
 
         # Step B: Composite idempotency & conflict detection on (provider, event_id) and (provider, provider_event_id)
+        pe_s2s_sql = "s2s_verification_status" if caps["pe_has_s2s"] else "NULL::text AS s2s_verification_status"
         cur.execute(
-            """
-            SELECT event_id, provider_event_id, order_id, tenant_id, amount, status, payload, s2s_verification_status
+            f"""
+            SELECT event_id, provider_event_id, order_id, tenant_id, amount, status, payload, {pe_s2s_sql}
             FROM payment_events
             WHERE provider = %s
               AND (event_id = %s OR provider_event_id = %s)
@@ -2028,6 +2114,8 @@ def commit_verified_settlement_transaction(
                 http_status=422,
             )
 
+        pe_conflict = "(provider, event_id)" if caps["pe_uq_provider_event"] else "(event_id)"
+
         # CTO Decision #4: Late settlement on EXPIRED / CANCELLED / FAILED orders -> quarantine
         late_states = ("EXPIRED", "CANCELLED", "CANCELED", "FAILED")
         if db_status in late_states or db_pay_status in late_states:
@@ -2045,9 +2133,9 @@ def commit_verified_settlement_transaction(
                     """,
                     (payload_json, raw_payload_json, now_utc, now_utc, provider, event_id),
                 )
-            else:
+            elif caps["pe_has_record_class"]:
                 cur.execute(
-                    """
+                    f"""
                     INSERT INTO payment_events (
                         provider, event_id, reference_id, event_type, payload, status,
                         record_classification, processed_at, created_at, updated_at,
@@ -2057,7 +2145,36 @@ def commit_verified_settlement_transaction(
                         'STAGE3_SETTLEMENT', %s, %s, %s,
                         %s, %s, %s, %s::jsonb, %s
                     )
-                    ON CONFLICT (provider, event_id) DO NOTHING;
+                    ON CONFLICT {pe_conflict} DO NOTHING;
+                    """,
+                    (
+                        provider,
+                        event_id,
+                        order_id,
+                        payload_json,
+                        now_utc,
+                        now_utc,
+                        now_utc,
+                        order_id,
+                        provider_event_id,
+                        verified_amount,
+                        raw_payload_json,
+                        canonical_tenant_id,
+                    ),
+                )
+            else:
+                cur.execute(
+                    f"""
+                    INSERT INTO payment_events (
+                        provider, event_id, reference_id, event_type, payload, status,
+                        processed_at, created_at, updated_at,
+                        order_id, provider_event_id, amount, raw_payload, tenant_id
+                    ) VALUES (
+                        %s, %s, %s, 'PAYMENT_SETTLED_LATE', %s::jsonb, 'QUARANTINED_LATE_SETTLEMENT',
+                        %s, %s, %s,
+                        %s, %s, %s, %s::jsonb, %s
+                    )
+                    ON CONFLICT {pe_conflict} DO NOTHING;
                     """,
                     (
                         provider,
@@ -2122,9 +2239,9 @@ def commit_verified_settlement_transaction(
                 """,
                 (payload_json, raw_payload_json, now_utc, now_utc, provider, event_id),
             )
-        else:
+        elif caps["pe_has_record_class"]:
             cur.execute(
-                """
+                f"""
                 INSERT INTO payment_events (
                     provider, event_id, reference_id, event_type, payload, status,
                     record_classification, processed_at, created_at, updated_at,
@@ -2134,7 +2251,37 @@ def commit_verified_settlement_transaction(
                     'STAGE3_SETTLEMENT', %s, %s, %s,
                     %s, %s, %s, %s::jsonb, %s
                 )
-                ON CONFLICT (provider, event_id) DO NOTHING
+                ON CONFLICT {pe_conflict} DO NOTHING
+                RETURNING event_id;
+                """,
+                (
+                    provider,
+                    event_id,
+                    order_id,
+                    payload_json,
+                    now_utc,
+                    now_utc,
+                    now_utc,
+                    order_id,
+                    provider_event_id,
+                    verified_amount,
+                    raw_payload_json,
+                    canonical_tenant_id,
+                ),
+            )
+        else:
+            cur.execute(
+                f"""
+                INSERT INTO payment_events (
+                    provider, event_id, reference_id, event_type, payload, status,
+                    processed_at, created_at, updated_at,
+                    order_id, provider_event_id, amount, raw_payload, tenant_id
+                ) VALUES (
+                    %s, %s, %s, 'PAYMENT_SETTLED', %s::jsonb, 'PROCESSED',
+                    %s, %s, %s,
+                    %s, %s, %s, %s::jsonb, %s
+                )
+                ON CONFLICT {pe_conflict} DO NOTHING
                 RETURNING event_id;
                 """,
                 (
@@ -2169,18 +2316,23 @@ def commit_verified_settlement_transaction(
                 "capi_triggered": False,
             }
         # Step D: Strict order status update & durable Stage 4 outbox record
+        ord_fulfillment_sql = (
+            "fulfillment_status = 'PENDING_STAGE4_VERIFICATION',\n                "
+            if caps["orders_has_fulfillment_status"]
+            else ""
+        )
+        ord_update_gross_sql = "COALESCE(gross_amount, amount, 0)" if caps["orders_has_amount"] else "COALESCE(gross_amount, 0)"
         cur.execute(
-            """
+            f"""
             UPDATE orders
             SET status = 'PAID',
                 payment_status = 'PAID',
                 order_status = 'PAID',
-                fulfillment_status = 'PENDING_STAGE4_VERIFICATION',
-                paid_at = COALESCE(orders.paid_at, %s),
+                {ord_fulfillment_sql}paid_at = COALESCE(orders.paid_at, %s),
                 updated_at = %s
             WHERE id = %s
-              AND tenant_id = %s
-              AND COALESCE(gross_amount, amount, 0) = %s
+              AND tenant_id::text = %s
+              AND {ord_update_gross_sql} = %s
               AND COALESCE(UPPER(TRIM(status)), '') IN ('PENDING', 'WAITING_PAYMENT', 'UNPAID', '');
             """,
             (now_utc, now_utc, order_id, canonical_tenant_id, verified_amount),
@@ -2193,7 +2345,7 @@ def commit_verified_settlement_transaction(
                 http_status=409,
             )
 
-        # Step E: Financial ledger accounting (fee_amount=NULL, net_amount=NULL, PENDING_RECONCILIATION)
+        # Step E: Financial ledger accounting (fee_amount=NULL, net_amount=NULL when nullable, else 0/verified_amount)
         ledger_meta_json = json.dumps(
             {
                 "credential_profile_id": verified_fields["credential_profile_id"],
@@ -2208,31 +2360,70 @@ def commit_verified_settlement_transaction(
             sort_keys=True,
             separators=(",", ":"),
         )
-        cur.execute(
-            """
-            INSERT INTO financial_ledger (
-                order_id, tenant_id, provider, event_id, gross_amount, fee_amount, net_amount,
-                currency, transaction_type, status, transaction_status, reconciliation_status, metadata, created_at
+        if caps["fl_has_tx_status"] and caps["fl_has_recon_status"] and caps["fl_fees_nullable"]:
+            cur.execute(
+                """
+                INSERT INTO financial_ledger (
+                    order_id, tenant_id, provider, event_id, gross_amount, fee_amount, net_amount,
+                    currency, transaction_type, status, transaction_status, reconciliation_status, metadata, created_at
+                )
+                SELECT
+                    %s, %s, %s, %s, %s, NULL, NULL,
+                    'IDR', 'PAYMENT_CREDIT', 'SETTLED', 'SETTLED', 'PENDING_RECONCILIATION', %s::jsonb, %s
+                WHERE NOT EXISTS (
+                    SELECT 1 FROM financial_ledger
+                    WHERE order_id = %s AND transaction_type = 'PAYMENT_CREDIT'
+                );
+                """,
+                (
+                    order_id,
+                    canonical_tenant_id,
+                    provider,
+                    event_id,
+                    verified_amount,
+                    ledger_meta_json,
+                    now_utc,
+                    order_id,
+                ),
             )
-            SELECT
-                %s, %s, %s, %s, %s, NULL, NULL,
-                'IDR', 'PAYMENT_CREDIT', 'SETTLED', 'SETTLED', 'PENDING_RECONCILIATION', %s::jsonb, %s
-            WHERE NOT EXISTS (
-                SELECT 1 FROM financial_ledger
-                WHERE order_id = %s AND transaction_type = 'PAYMENT_CREDIT'
-            );
-            """,
-            (
-                order_id,
-                canonical_tenant_id,
-                provider,
-                event_id,
-                verified_amount,
-                ledger_meta_json,
-                now_utc,
-                order_id,
-            ),
-        )
+        else:
+            fee_val = None if caps["fl_fees_nullable"] else 0
+            net_val = None if caps["fl_fees_nullable"] else verified_amount
+            extra_cols = ""
+            extra_vals = ""
+            if caps["fl_has_tx_status"]:
+                extra_cols += ", transaction_status"
+                extra_vals += ", 'SETTLED'"
+            if caps["fl_has_recon_status"]:
+                extra_cols += ", reconciliation_status"
+                extra_vals += ", 'PENDING_RECONCILIATION'"
+            cur.execute(
+                f"""
+                INSERT INTO financial_ledger (
+                    order_id, tenant_id, provider, event_id, gross_amount, fee_amount, net_amount,
+                    currency, transaction_type, status{extra_cols}, metadata, created_at
+                )
+                SELECT
+                    %s, %s, %s, %s, %s, %s, %s,
+                    'IDR', 'PAYMENT_CREDIT', 'SETTLED'{extra_vals}, %s::jsonb, %s
+                WHERE NOT EXISTS (
+                    SELECT 1 FROM financial_ledger
+                    WHERE order_id = %s AND transaction_type = 'PAYMENT_CREDIT'
+                );
+                """,
+                (
+                    order_id,
+                    canonical_tenant_id,
+                    provider,
+                    event_id,
+                    verified_amount,
+                    fee_val,
+                    net_val,
+                    ledger_meta_json,
+                    now_utc,
+                    order_id,
+                ),
+            )
 
         # Step F: Atomic commit
         conn.commit()
