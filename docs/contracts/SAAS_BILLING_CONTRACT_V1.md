@@ -132,7 +132,7 @@ For each callback Core must:
 5. In one DB transaction, insert a provider-event idempotency record, lock the purchase and payment intent, transition the shared Core payment intent, append the immutable SaaS billing ledger entry, and enqueue a SaaS entitlement activation event in Core's outbox.
 6. Commit once. Duplicate delivery returns an idempotent acknowledgement and creates no second ledger entry or entitlement event.
 
-The existing TrustedSettlementVerificationBoundary is the cryptographic verification primitive. The existing order-specific commit_verified_settlement_transaction must not be called for SaaS purchases unless the authoritative object is a valid order under that API's contract. SaaS settlement requires a SaaS-specific repository transaction around the shared Core payment intent and outbox.
+The existing TrustedSettlementVerificationBoundary is the cryptographic verification primitive. Do not claim Xendit provides Ed25519 provenance unless the selected Xendit integration contract explicitly documents and verifies that mechanism. Provider-supported callback token/signature validation remains authoritative; an unrelated Ed25519 layer must not replace it. The existing order-specific commit_verified_settlement_transaction must not be called for SaaS purchases unless the authoritative object is a valid order under that API's contract. SaaS settlement requires a SaaS-specific repository transaction around the shared Core payment intent and outbox.
 
 ## 8. Ledger, status and entitlement event
 
@@ -229,9 +229,9 @@ Errors must not expose secret refs, plaintext provider responses, or internal cr
 
 This contract is the implementation target. The current branch contains:
 - app/schemas/saas_billing.py — typed request/quote contract;
-- app/services/saas_billing_catalog.py — Shop/Studio catalog map and deterministic quote calculation;
+- app/services/saas_billing_catalog.py — Founder-approved Shop/Studio Staging catalog map, deterministic quote calculation, default Studio Annual checkout marker, campaign marker, and conservative bundle guard;
 - app/services/saas_billing_auth.py — product-scoped server-to-server HMAC boundary with signed idempotency input;
 - migrations/038_core_saas_billing_contract_v1.sql — draft Core-owned purchase, webhook, ledger and entitlement-event tables;
 - tests/test_saas_billing_catalog.py and tests/test_saas_billing_auth.py — automated cases authored, not yet executed.
 
-Still outstanding: registered HTTP routes, durable purchase/payment-intent orchestration, sandbox Xendit adapter and platform credential-profile resolution, verified webhook settlement transaction, shared outbox dispatch/entitlement consumer, recovery worker, integration tests, local build/typecheck, and source-SHA Preview evidence. The draft migration has not been applied to any database. SAAS_BILLING_LIVE_ENABLED remains false. No claim of build/typecheck/test PASS is made by this document.
+Still outstanding: registered HTTP routes, durable purchase/payment-intent orchestration with effective-tenant-entitlement checks, sandbox Xendit adapter and platform credential-profile resolution, verified webhook settlement transaction, shared outbox dispatch/entitlement consumer, recovery worker, integration tests, local build/typecheck, and source-SHA Preview evidence. Product must ratify the exact entitlements included in each Shop tier and the channel/agent/quota/provider definitions for SmartChatbox before the bundle guard can be relaxed. The draft migration has not been applied to any database. SAAS_BILLING_LIVE_ENABLED remains false. No claim of build/typecheck/test PASS is made by this document.
