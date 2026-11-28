@@ -1,6 +1,6 @@
 # Core SaaS Billing Contract v1
 
-**Status:** Controlled implementation draft — non-production only  
+**Status:** S1–S6 CI PASS — Staging preflight pending — non-production only  
 **Owner:** BoonTrack Core Engineering  
 **Consumers:** BoonTrack Shop and BoonTrack Studio  
 **Baseline:** Core main at 2bed59f99050001ad6bf0b35881f381f5c9e91d5  
@@ -44,7 +44,7 @@ The API paths in Section 4 are target paths, not a statement of deployed endpoin
 
 ## 0.4 S1–S6 implementation candidate — 28 Nov 2026
 
-This section supersedes the earlier pre-implementation status above for source-code readiness. CI evidence is still required before these items are marked PASS.
+This section supersedes the earlier pre-implementation status above for source-code readiness. The CI gate has now passed on the S1–S6 implementation commit; Staging read-only inspection remains a separate pending gate.
 
 - **S1 — Migration 038 multi-SKU and deduplication:** the ledger uniqueness boundary is now per provider event + purchase + SKU + entry kind. Provider webhook event dedup remains unique by provider + provider event ID. Ledger rows remain append-only; purchase line-item amounts are reconciled to the persisted subtotal and tax snapshot.
 - **S2 — Atomic settlement repository:** `app/services/saas_billing_settlement.py` verifies invoice reference, dedicated credential profile, provider business ID, sandbox environment, IDR currency, settled status, and exact amount. Payment state, webhook event, SKU ledger entries, entitlement requests, and activation outbox are written in one PostgreSQL transaction.
@@ -53,7 +53,11 @@ This section supersedes the earlier pre-implementation status above for source-c
 - **S5 — Reconciliation service:** `app/services/saas_billing_reconciliation.py` checks the bound sandbox invoice using the provider status adapter, sends verified paid states through the same atomic settlement repository, and records expiry only for a non-paid purchase.
 - **S6 — Disposable CI and schema preflight:** `.github/workflows/saas-billing-p0.yml` applies Migration 038 only to runner-local disposable PostgreSQL, executes the schema preflight script, then runs the PostgreSQL integration suite and targeted typecheck. `scripts/preflight_saas_billing_migration_038.py --staging-read-only` is an independent read-only Staging check; it cannot apply DDL.
 
-**Unchanged hard gates:** the product payment-intent route remains HTTP 409 `BILLING_TAX_POLICY_PENDING`. Explicit approved 0-bps tax policy appears only inside deterministic CI/test fixtures, not runtime defaults. CI uses fake Xendit profile credentials and a fake provider; no real Xendit sandbox request has been made. Migration 038 has not been applied to Staging or Production. S1–S6 must not be marked PASS until the new workflow run succeeds on the exact branch HEAD.
+**CI closure evidence — 28 Nov 2026:** GitHub Actions Run `46150120630` / Run #42 (`https://github.com/B055OB/boontrack-core/actions/runs/46150120630`) completed `SUCCESS` for implementation commit `f704f15b00f51cf99f085086c5a8e3fec890efbe`. Runner-local PostgreSQL initialization and Migration 038 application succeeded; the disposable preflight returned `APPLIED_AND_VERIFIED`, with all four SaaS tables, the multi-SKU deduplication index, forced RLS, append-only ledger trigger, and isolated fake sandbox credential profile present. Integration/regression tests: **38 passed, 20 subtests passed**. Targeted mypy: **no issues in 9 source files**. This verifies S1–S6 in disposable CI only; it does not claim a real Xendit provider round-trip or Staging database access.
+
+**Staging preflight status:** NOT RUN / BLOCKED because `SAAS_BILLING_STAGING_PREFLIGHT_DSN` was not configured in the workflow/runtime. `scripts/preflight_saas_billing_migration_038.py --staging-read-only` requires that explicit DSN, rejects a target whose host/database does not identify as Staging, opens a read-only transaction, performs no DDL, and reports `migration_application_authorized: false`. The current CI environment shows `STAGING_DATABASE_URL`, `SUPABASE_DB_URL`, and `REVOKED_STAGING_DB_PASSWORD` empty; no alternate Staging read-only connection was supplied. Therefore there is no Staging catalog/schema evidence yet, and Migration 038 remains unapplied there.
+
+**Unchanged hard gates:** the product payment-intent route remains HTTP 409 `BILLING_TAX_POLICY_PENDING`. Explicit approved 0-bps tax policy appears only inside deterministic CI/test fixtures, not runtime defaults. CI uses fake Xendit profile credentials and a fake provider; no real Xendit sandbox request has been made. Migration 038 has not been applied to Staging or Production. Main, Production, Live SaaS Billing, OnlineBoost Live `ORD-OB-3B137B30`, and Shabu Ajhi remain STRICT HOLD.
 
 ## 1. Purpose and authority
 
