@@ -5,6 +5,7 @@ from app.services.saas_billing_catalog import TaxPolicy, quote_catalog_items
 from app.services.saas_billing_repository import (
     SaaSBillingRepository,
     SaaSBillingRepositoryError,
+    SaaSBillingIdempotencyConflict,
 )
 
 
@@ -180,7 +181,7 @@ class TestSaaSBillingRepositoryPostgresIntegration(unittest.TestCase):
 
     def test_same_idempotency_key_with_changed_payload_is_rejected(self):
         self._create()
-        with self.assertRaisesRegex(Exception, "BILLING_IDEMPOTENCY_CONFLICT"):
+        with self.assertRaisesRegex(SaaSBillingIdempotencyConflict, "BILLING_IDEMPOTENCY_CONFLICT"):
             self._create(self._quote("STUDIO-ANNUAL-299K"))
 
     def test_purchase_and_payment_intent_roll_back_when_outbox_insert_fails(self):
@@ -191,10 +192,10 @@ class TestSaaSBillingRepositoryPostgresIntegration(unittest.TestCase):
             with conn.cursor() as cur:
                 cur.execute(
                     f"CREATE OR REPLACE FUNCTION {function_name}() RETURNS trigger "
-                    "LANGUAGE plpgsql AS $ BEGIN "
+                    "LANGUAGE plpgsql AS $function$ BEGIN "
                     "IF NEW.event_type = 'SAAS_PAYMENT_INTENT_CREATE_REQUESTED' "
                     "THEN RAISE EXCEPTION 'CI_FORCED_OUTBOX_FAILURE'; END IF; "
-                    "RETURN NEW; END; $;"
+                    "RETURN NEW; END; $function$;"
                 )
                 cur.execute(
                     f"DROP TRIGGER IF EXISTS {trigger_name} ON public.payment_outbox_events;"
