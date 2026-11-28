@@ -2,7 +2,8 @@ import json
 import unittest
 from unittest.mock import patch
 
-from app.services.payment.base import TransactionResponse\nfrom app.services.saas_billing_xendit import SaaSXenditProfileError, SaaSXenditProvider, SaaSXenditSandboxProfile
+from app.services.payment.base import TransactionResponse
+from app.services.saas_billing_xendit import SaaSXenditProfileError, SaaSXenditProvider, SaaSXenditSandboxProfile
 from app.routes.saas_billing_routes import (
     create_saas_payment_intent,
     read_saas_billing_catalog,
@@ -52,7 +53,8 @@ class TestSaaSBillingRoutesFailClosed(unittest.IsolatedAsyncioTestCase):
             "SAAS_XENDIT_SANDBOX_SECRET_KEY": "saas_sandbox_secret_key_123456",
             "SAAS_XENDIT_SANDBOX_CALLBACK_TOKEN": "saas_sandbox_callback_token_123456",
             "SAAS_XENDIT_SANDBOX_BUSINESS_ID": "business_saas_staging",
-            "SAAS_XENDIT_SANDBOX_API_URL": "https://api.xendit.co",\n            "SAAS_XENDIT_SANDBOX_WEBHOOK_URL": "https://api-staging.boontrack.com/api/v1/saas-billing/webhooks/xendit",
+            "SAAS_XENDIT_SANDBOX_API_URL": "https://api.xendit.co",
+            "SAAS_XENDIT_SANDBOX_WEBHOOK_URL": "https://api-staging.boontrack.com/api/v1/saas-billing/webhooks/xendit",
             "XENDIT_SECRET_KEY": "onlineboost_secret_key_123456",
             "XENDIT_CALLBACK_TOKEN": "onlineboost_callback_token_123456",
         }
