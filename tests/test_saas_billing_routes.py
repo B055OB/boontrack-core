@@ -2,7 +2,7 @@ import json
 import unittest
 from unittest.mock import patch
 
-from app.services.saas_billing_xendit import SaaSXenditProfileError, SaaSXenditSandboxProfile
+from app.services.payment.base import TransactionResponse\nfrom app.services.saas_billing_xendit import SaaSXenditProfileError, SaaSXenditProvider, SaaSXenditSandboxProfile
 from app.routes.saas_billing_routes import (
     create_saas_payment_intent,
     read_saas_billing_catalog,
@@ -52,7 +52,7 @@ class TestSaaSBillingRoutesFailClosed(unittest.IsolatedAsyncioTestCase):
             "SAAS_XENDIT_SANDBOX_SECRET_KEY": "saas_sandbox_secret_key_123456",
             "SAAS_XENDIT_SANDBOX_CALLBACK_TOKEN": "saas_sandbox_callback_token_123456",
             "SAAS_XENDIT_SANDBOX_BUSINESS_ID": "business_saas_staging",
-            "SAAS_XENDIT_SANDBOX_API_URL": "https://api.xendit.co",
+            "SAAS_XENDIT_SANDBOX_API_URL": "https://api.xendit.co",\n            "SAAS_XENDIT_SANDBOX_WEBHOOK_URL": "https://api-staging.boontrack.com/api/v1/saas-billing/webhooks/xendit",
             "XENDIT_SECRET_KEY": "onlineboost_secret_key_123456",
             "XENDIT_CALLBACK_TOKEN": "onlineboost_callback_token_123456",
         }
@@ -72,6 +72,55 @@ class TestSaaSBillingRoutesFailClosed(unittest.IsolatedAsyncioTestCase):
         }
         with self.assertRaisesRegex(SaaSXenditProfileError, "BILLING_ONLINEBOOST_CREDENTIAL_REUSE_FORBIDDEN"):
             SaaSXenditSandboxProfile.from_env(env)
+
+
+    async def test_saas_provider_reuses_adapter_for_dynamic_qris_and_sandbox_callback(self):
+        env = {
+            "SAAS_XENDIT_ENV": "sandbox",
+            "SAAS_XENDIT_SANDBOX_PROFILE_ID": "saas-staging-xendit",
+            "SAAS_XENDIT_SANDBOX_SECRET_KEY": "saas_sandbox_secret_key_123456",
+            "SAAS_XENDIT_SANDBOX_CALLBACK_TOKEN": "saas_sandbox_callback_token_123456",
+            "SAAS_XENDIT_SANDBOX_BUSINESS_ID": "business_saas_staging",
+            "SAAS_XENDIT_SANDBOX_API_URL": "https://api.xendit.co",
+            "SAAS_XENDIT_SANDBOX_WEBHOOK_URL": "https://api-staging.boontrack.com/api/v1/saas-billing/webhooks/xendit",
+            "XENDIT_SECRET_KEY": "onlineboost_secret_key_123456",
+            "XENDIT_CALLBACK_TOKEN": "onlineboost_callback_token_123456",
+        }
+        profile = SaaSXenditSandboxProfile.from_env(env)
+        captured = {}
+
+        class FakeAdapter:
+            def __init__(self, **kwargs):
+                captured["adapter_kwargs"] = kwargs
+                self.api_url = ""
+
+            async def create_transaction(self, request):
+                captured["request"] = request
+                return TransactionResponse(
+                    transaction_id="qr_ci_123",
+                    order_id=request.order_id,
+                    status="PENDING",
+                    payment_method="DYNAMIC_QRIS",
+                    amount=request.amount,
+                    payment_url="https://checkout.xendit.co/qr-ci",
+                    qr_string="000201010212",
+                    qr_image_url="https://cdn.example.test/qr.png",
+                    raw_response={
+                        "reference_id": request.order_id,
+                        "currency": "IDR",
+                    },
+                )
+
+        provider = SaaSXenditProvider(profile=profile, adapter_factory=FakeAdapter)
+        result = await provider.create_dynamic_qris(
+            purchase_reference="saas-ci-reference-001",
+            amount_idr=99000,
+            description="Studio Annual",
+        )
+        self.assertEqual(result["provider"], "XENDIT")
+        self.assertEqual(result["amount_idr"], 99000)
+        self.assertEqual(captured["request"].metadata["callback_url"], profile.webhook_url)
+        self.assertEqual(captured["adapter_kwargs"]["env"], "sandbox")
 
     def test_router_registers_core_saas_billing_contract_paths(self):
         paths = {route.path for route in saas_billing_router.routes}
