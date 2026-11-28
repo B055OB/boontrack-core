@@ -310,6 +310,23 @@ class SaaSBillingRepository:
                     if entitlement_tables and entitlement_tables[0] and entitlement_tables[1]:
                         cur.execute(
                             """
+                            SELECT plan_id, status::text, subscription_ends_at
+                            FROM public.tenant_entitlements
+                            WHERE lower(tenant_slug) = %s
+                              AND status::text IN ('ACTIVE', 'TRIALING')
+                              AND (subscription_ends_at IS NULL OR subscription_ends_at > NOW())
+                            LIMIT 1;
+                            """, (tenant_slug,),
+                        )
+                        legacy_entitlement = cur.fetchone()
+                        if legacy_entitlement:
+                            raw_plan = str(legacy_entitlement[0] or "").strip().upper()
+                            if raw_plan in {"TEAM_SCALE", "TEAM", "ENTERPRISE"}:
+                                result["legacy_plan_id"] = "ENTERPRISE"
+                                result["legacy_plan_status"] = str(legacy_entitlement[1])
+                                result["legacy_period_end"] = legacy_entitlement[2]
+                        cur.execute(
+                            """
                             SELECT pe.feature_key
                             FROM public.tenant_entitlements te
                             JOIN public.plan_entitlements pe ON pe.plan_id = te.plan_id
