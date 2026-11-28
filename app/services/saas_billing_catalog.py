@@ -204,6 +204,9 @@ def quote_catalog_items(
     lines: list[SaaSQuoteLine] = []
     subtotal = 0
     contains_free_base = False
+    seen_entitlement_keys: set[str] = set()
+    shop_has_package = False
+    shop_has_addon = False
 
     for item in items:
         entry = get_catalog_entry(product, item.sku)
@@ -213,6 +216,18 @@ def quote_catalog_items(
             raise CatalogError("BILLING_SKU_NOT_SELLABLE")
         if item.quantity < 1 or item.quantity > 20:
             raise CatalogError("BILLING_QUANTITY_INVALID")
+
+        if entry.entitlement_key in seen_entitlement_keys:
+            raise CatalogError("BILLING_DUPLICATE_ENTITLEMENT")
+        seen_entitlement_keys.add(entry.entitlement_key)
+
+        if product == SaaSProduct.SHOP:
+            shop_has_package = shop_has_package or entry.item_kind in {
+                BillingItemKind.BASE_TIER, BillingItemKind.SUBSCRIPTION
+            }
+            shop_has_addon = shop_has_addon or (
+                entry.item_kind == BillingItemKind.STANDALONE_ADDON
+            )
 
         line_amount = entry.amount_idr * item.quantity
         subtotal += line_amount
@@ -230,6 +245,7 @@ def quote_catalog_items(
                 entitlement_key=entry.entitlement_key,
                 credit_units=entry.credit_units * item.quantity,
                 credit_validity_months=entry.credit_validity_months,
+                entitlement_validity_days=entry.entitlement_validity_days,
             )
         )
 
