@@ -22,7 +22,7 @@ Not yet verified or available as a staging API:
 - CI P0 must pass on the latest branch HEAD, including catalog, legacy Team Scale, repository fail-closed tests, and targeted typecheck.
 - Migration 038 has not been applied to any database; the repository cannot run until the required Core-owned tables exist in the target staging database.
 - FastAPI route registration and server-to-server API responses are not yet implemented.
-- Xendit sandbox profile resolver/adapter, provider webhook receiver, verified settlement transaction, ledger writer, entitlement activation consumer, and recovery worker are not yet complete.
+- SaaS-specific Xendit profile binding/adapter orchestration, SaaS webhook receiver, verified SaaS settlement transaction, ledger writer, entitlement activation consumer, and recovery worker are not yet wired. Core already has a generic Xendit adapter and webhook/payment primitives on main; see Section 6.1 for mandatory reuse boundaries.
 - No Shop, Creator, or Studio UI candidate may assume these endpoints are reachable. Until a later CCC handover explicitly marks the contract READY, consumers must fail closed and must not create local payment intents or activate entitlements.
 
 The API paths in Section 4 are target paths, not a statement of deployed endpoint availability. TAX_POLICY_PENDING remains a hard payment-intent gate.
@@ -171,6 +171,24 @@ The initial non-production adapter is Xendit sandbox only. The platform SaaS cre
 The existing CredentialProfileMapper and secret-pointer rules are the baseline for isolation. A tenant's own Shop buyer-checkout credential is never reused to bill that tenant for SaaS packages.
 
 No production profile may be loaded by the non-production deployment. No production Xendit secret, Dodo credentials, Midtrans credentials or tenant payment profile may be used by the initial SaaS billing adapter.
+
+### 6.1 Existing Core Xendit pattern — reuse decision
+
+The following existing Core modules are the reference implementation on `main` and must be reused or safely wrapped rather than replaced with a new provider integration:
+
+| Existing component | Existing pattern to reuse | SaaS adaptation required |
+|---|---|---|
+| `app/services/payment/gateway_xendit.py` | Shared `PaymentAdapter` contract; Xendit Basic Auth from instance secret; Dynamic QRIS `POST /qr_codes`; invoice/Web Checkout `POST /v2/invoices`; status lookup; `X-CALLBACK-TOKEN` constant-time comparison | Instantiate only with a Core platform SaaS sandbox profile; remove implicit OnlineBoost tenant defaults; inject the SaaS callback URL; avoid current invalid-token log that includes the supplied token; preserve unknown provider outcomes rather than collapsing transport failures to PENDING |
+| `app/services/xendit_service.py` | Existing invoice/checkout payload shape, Dynamic QRIS API request shape, Xendit error classification for definitive vs ambiguous outcomes | Reuse request/response mapping only. Do not reuse its process-memory `PAYMENT_INTENTS` registry or use it as SaaS persistence/idempotency authority |
+| `app/routes/xendit.py` | Canonical persisted reference lookup, IDR/amount comparison, provider callback-token boundary, trusted settlement capability, duplicate handling, late-settlement quarantine, structured tracing | Existing route is order/tenant-merchant-profile scoped and uses order-specific `commit_verified_settlement_transaction`. Do not route SaaS purchase callbacks through that transaction. Build a SaaS-specific handler using the same provider-authentication and verification primitives, SaaS purchase lookup, shared payment intent, SaaS ledger and Core outbox in one DB transaction. Require an explicit paid status; do not inherit any permissive missing-status default |
+| `app/core/security/payment_auth_guard.py` | Canonical tenant identity and PostgreSQL-backed anti-replay/HMAC primitives | Reuse only after mapping product-server identity to the authenticated canonical tenant; do not trust caller tenant or merchant credential fields |
+| `app/core/security/provenance_authority.py` | `TrustedSettlementVerificationBoundary` mints a verified settlement capability after Xendit callback-token verification; provider method is `XENDIT_CALLBACK_TOKEN` | Reuse the Xendit callback-token verification primitive, but define a SaaS-specific authoritative purchase context and atomic commit. Ed25519 provenance is an internal Core signing layer, not a Xendit webhook signature; never describe it as such |
+| `app/models/payment_event.py` | Provider event identity and append-only payment event audit patterns | SaaS event identity must be tied to SaaS purchase/payment intent; do not mutate order-scoped events or create a second financial authority |
+| `app/workers/payment_reconciler_worker.py` | Existing intent state model, bounded reconciliation outcomes, terminal-state and late-settlement quarantine semantics | Do not use its in-memory order/intent stores or inventory-restoration branch for SaaS. Implement SaaS recovery against persisted SaaS purchase + shared Core payment intent and existing outbox |
+
+**Reuse boundary:** provider connectivity and its tested request/response/authentication primitives are shared Core capabilities. OnlineBoost's order-specific pricing, unique-amount policy, tenant merchant profile, WhatsApp/Telegram fulfillment, CAPI dispatch and order settlement commit are not SaaS billing behavior. Shop purchases activate Shop entitlements; Studio purchases grant Studio credits only after the SaaS settlement transaction has committed. No OnlineBoost fulfillment function is called by SaaS.
+
+**Current source-level caveats to close before reuse:** the generic adapter's QRIS and invoice flows are separate provider operations; confirm the selected product's intended flow rather than issuing both blindly. Its webhook normalizer currently accepts several event shapes and its route contains order-specific defaults. Its invalid-token warning must not log the candidate token. Its status lookup currently catches provider errors and returns a PENDING-shaped result, which is insufficient to distinguish an ambiguous provider outcome. These are targeted adapter hardening items, not reasons to rebuild Xendit connectivity.
 
 ## 7. Webhook verification and atomic settlement
 
