@@ -98,6 +98,9 @@ class SaaSXenditProvider:
             TransactionRequest(
                 order_id=purchase_reference,
                 amount=amount_idr,
+                customer_name="BoonTrack SaaS",
+                customer_phone="",
+                customer_email=None,
                 description=description,
                 payment_method="INVOICE",
                 metadata={
