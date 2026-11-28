@@ -9,6 +9,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: saas-billing-p0-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   saas-billing-p0:
     name: Verify SaaS catalog, legacy Team Scale, and targeted typing
