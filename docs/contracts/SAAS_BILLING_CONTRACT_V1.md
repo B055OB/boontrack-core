@@ -7,6 +7,26 @@
 **Contract version:** saas-billing.v1  
 **Live billing:** DISABLED
 
+## 0.1 Staging implementation gate — 28 Nov 2026
+
+This document defines the target contract. It is not evidence that every route is deployed or ready for UI consumption.
+
+Implemented in the feature branch:
+- Founder-approved Shop and Studio catalog values, including existing Team Scale as TEAM_SCALE -> ENTERPRISE.
+- Server-calculated quote primitive and product-server HMAC authorization helper.
+- PostgreSQL-only SaaSBillingRepository source for atomic payment-intent + purchase reservation, durable idempotency, Core outbox enqueue, and effective entitlement reads.
+- Legacy Shop entitlement lookup is read-only; Team Scale is normalized to ENTERPRISE. No existing subscription row is rewritten.
+- WABA Official line items retain META_FEES_PASS_THROUGH metadata; Meta fees are not included in the Rp149,000 SKU price.
+
+Not yet verified or available as a staging API:
+- CI P0 must pass on the latest branch HEAD, including catalog, legacy Team Scale, repository fail-closed tests, and targeted typecheck.
+- Migration 038 has not been applied to any database; the repository cannot run until the required Core-owned tables exist in the target staging database.
+- FastAPI route registration and server-to-server API responses are not yet implemented.
+- Xendit sandbox profile resolver/adapter, provider webhook receiver, verified settlement transaction, ledger writer, entitlement activation consumer, and recovery worker are not yet complete.
+- No Shop, Creator, or Studio UI candidate may assume these endpoints are reachable. Until a later CCC handover explicitly marks the contract READY, consumers must fail closed and must not create local payment intents or activate entitlements.
+
+The API paths in Section 4 are target paths, not a statement of deployed endpoint availability. TAX_POLICY_PENDING remains a hard payment-intent gate.
+
 ## 1. Purpose and authority
 
 Shop and Studio consume one Core-owned SaaS billing contract. Core is the sole authority for catalog price, quote, payment intent, provider profile selection, webhook acceptance, settlement, billing ledger, payment state, and entitlement activation.
