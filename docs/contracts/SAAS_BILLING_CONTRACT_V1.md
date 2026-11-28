@@ -82,7 +82,8 @@ Request fields:
 - product: SHOP or STUDIO;
 - items: one or more SKU and quantity pairs;
 - catalog_version: optional; when supplied it must match a valid retained version;
-- request_reference: caller-generated non-secret reference.
+- request_reference: caller-generated non-secret purchase reference used as the HMAC-bound order reference;
+- idempotency_key: caller-generated value included in the signed request body (an Idempotency-Key header may mirror it, but the body value is authoritative for signature binding).
 
 The request must reject amount, subtotal, tax, currency, provider, merchant account, tenant_id, entitlement status, or credential fields. Core resolves tenant identity separately from the request body.
 
@@ -96,7 +97,7 @@ Creation flow:
 1. Verify principal, product server identity, tenant membership, and billing permission.
 2. Resolve catalog entries and server-side prices; reject any non-sellable SKU or missing dependency.
 3. Create a short-lived immutable quote and calculate the request fingerprint.
-4. Require an explicit Idempotency-Key. Scope it as saas:{product}:{canonical_tenant_id}:{client_key}; reject reuse with a different fingerprint using HTTP 409.
+4. Require idempotency_key in the HMAC-signed request body. Core scopes it as saas:{product}:{canonical_tenant_id}:{client_key}; reject reuse with a different fingerprint using HTTP 409.
 5. Open a durable PostgreSQL connection. If persistence is unavailable, fail with 503. SaaS billing must never use PaymentIntentLifecycleService's in-memory fallback.
 6. Persist the SaaS purchase record and the shared Core payment_intents record. The payment_intents row uses canonical tenant UUID, a unique Core purchase order ID, exact server-derived amount, and namespaced idempotency key.
 7. Resolve the platform SaaS Xendit sandbox credential profile from Core configuration. Create the provider invoice using only the resolved sandbox credential.
@@ -229,7 +230,7 @@ Errors must not expose secret refs, plaintext provider responses, or internal cr
 This contract is the implementation target. The current branch contains:
 - app/schemas/saas_billing.py — typed request/quote contract;
 - app/services/saas_billing_catalog.py — Shop/Studio catalog map and deterministic quote calculation;
-- app/services/saas_billing_auth.py — product-scoped server-to-server HMAC boundary;
+- app/services/saas_billing_auth.py — product-scoped server-to-server HMAC boundary with signed idempotency input;
 - migrations/038_core_saas_billing_contract_v1.sql — draft Core-owned purchase, webhook, ledger and entitlement-event tables;
 - tests/test_saas_billing_catalog.py and tests/test_saas_billing_auth.py — automated cases authored, not yet executed.
 
