@@ -128,6 +128,7 @@ class SaaSQuoteRequest:
 class SaaSQuoteLine:
     sku: str
     item_kind: BillingItemKind
+    cadence: BillingCadence
     quantity: int
     unit_amount_idr: int
     line_amount_idr: int
