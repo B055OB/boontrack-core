@@ -42,6 +42,19 @@ The API paths in Section 4 are target paths, not a statement of deployed endpoin
 - **P3 source:** `app/routes/saas_billing_routes.py` is registered from `app/main.py`. Catalog and quote preview are implemented in feature-branch code. Payment-intent route remains blocked by `TAX_POLICY_PENDING`; status, webhook settlement and reconciliation remain fail-closed. These are not deployed Staging APIs.
 - **Deployment and database boundary:** no Staging deployment has been executed and Migration 038 remains unapplied to Staging/Production. No Production, Main, or live SaaS activation is authorized.
 
+## 0.4 S1–S6 implementation candidate — 28 Nov 2026
+
+This section supersedes the earlier pre-implementation status above for source-code readiness. CI evidence is still required before these items are marked PASS.
+
+- **S1 — Migration 038 multi-SKU and deduplication:** the ledger uniqueness boundary is now per provider event + purchase + SKU + entry kind. Provider webhook event dedup remains unique by provider + provider event ID. Ledger rows remain append-only; purchase line-item amounts are reconciled to the persisted subtotal and tax snapshot.
+- **S2 — Atomic settlement repository:** `app/services/saas_billing_settlement.py` verifies invoice reference, dedicated credential profile, provider business ID, sandbox environment, IDR currency, settled status, and exact amount. Payment state, webhook event, SKU ledger entries, entitlement requests, and activation outbox are written in one PostgreSQL transaction.
+- **S3 — Dedicated SaaS Xendit webhook:** `POST /api/v1/saas-billing/webhooks/xendit` uses the dedicated SaaS callback token and routes only into the SaaS settlement repository. It does not call the generic merchant `handle_webhook` path.
+- **S4 — Idempotent SaaS outbox consumer:** `app/workers/saas_billing_outbox_consumer.py` handles sandbox invoice creation and post-settlement entitlement activation with a durable claim/lease and retries. The generic Inbox payment outbox dispatcher explicitly excludes `SAAS_*` event types.
+- **S5 — Reconciliation service:** `app/services/saas_billing_reconciliation.py` checks the bound sandbox invoice using the provider status adapter, sends verified paid states through the same atomic settlement repository, and records expiry only for a non-paid purchase.
+- **S6 — Disposable CI and schema preflight:** `.github/workflows/saas-billing-p0.yml` applies Migration 038 only to runner-local disposable PostgreSQL, executes the schema preflight script, then runs the PostgreSQL integration suite and targeted typecheck. `scripts/preflight_saas_billing_migration_038.py --staging-read-only` is an independent read-only Staging check; it cannot apply DDL.
+
+**Unchanged hard gates:** the product payment-intent route remains HTTP 409 `BILLING_TAX_POLICY_PENDING`. Explicit approved 0-bps tax policy appears only inside deterministic CI/test fixtures, not runtime defaults. CI uses fake Xendit profile credentials and a fake provider; no real Xendit sandbox request has been made. Migration 038 has not been applied to Staging or Production. S1–S6 must not be marked PASS until the new workflow run succeeds on the exact branch HEAD.
+
 ## 1. Purpose and authority
 
 Shop and Studio consume one Core-owned SaaS billing contract. Core is the sole authority for catalog price, quote, payment intent, provider profile selection, webhook acceptance, settlement, billing ledger, payment state, and entitlement activation.

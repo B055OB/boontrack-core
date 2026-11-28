@@ -41,6 +41,13 @@ jobs:
       XENDIT_CALLBACK_TOKEN: test_ci_xendit_callback_token_mock_12345
       XENDIT_API_URL: http://127.0.0.1:58083
       XENDIT_ENV: sandbox
+      SAAS_XENDIT_ENV: sandbox
+      SAAS_XENDIT_SANDBOX_PROFILE_ID: ci-saas-xendit-sandbox-profile
+      SAAS_XENDIT_SANDBOX_SECRET_KEY: test_ci_saas_xendit_sandbox_secret_key_mock_12345
+      SAAS_XENDIT_SANDBOX_CALLBACK_TOKEN: test_ci_saas_xendit_sandbox_callback_token_mock_12345
+      SAAS_XENDIT_SANDBOX_BUSINESS_ID: test_ci_saas_xendit_business_id
+      SAAS_XENDIT_SANDBOX_API_URL: http://127.0.0.1:58083
+      SAAS_XENDIT_SANDBOX_WEBHOOK_URL: http://127.0.0.1:58084/api/v1/saas-billing/webhooks/xendit
       SUPABASE_URL: http://127.0.0.1:54321
       NEXT_PUBLIC_SUPABASE_URL: http://127.0.0.1:54321
       EXPECTED_SUPABASE_URL: http://127.0.0.1:54321
@@ -92,12 +99,13 @@ jobs:
           sudo -u postgres psql -tAc "SELECT 1 FROM pg_database WHERE datname='test_boontrack'" | grep -q 1 || sudo -u postgres createdb -O test_user test_boontrack
           python scripts/init_test_postgres_schema.py
           psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f migrations/038_core_saas_billing_contract_v1.sql
+          python scripts/preflight_saas_billing_migration_038.py --verify-disposable
           redis-cli ping
 
       - name: Verify catalog and existing Team Scale regression tests
         run: |
-          pytest -q tests/test_saas_billing_catalog.py tests/test_subscription_pricing.py tests/test_saas_billing_repository.py tests/test_saas_billing_routes.py
+          pytest -q tests/test_saas_billing_catalog.py tests/test_subscription_pricing.py tests/test_saas_billing_repository.py tests/test_saas_billing_routes.py tests/test_saas_billing_settlement.py
 
       - name: Typecheck SaaS billing schema and catalog
         run: |
-          mypy --follow-imports=silent --ignore-missing-imports app/schemas/saas_billing.py app/services/saas_billing_catalog.py app/services/saas_billing_auth.py app/services/saas_billing_repository.py app/services/saas_billing_xendit.py app/routes/saas_billing_routes.py
+          mypy --follow-imports=silent --ignore-missing-imports app/schemas/saas_billing.py app/services/saas_billing_catalog.py app/services/saas_billing_auth.py app/services/saas_billing_repository.py app/services/saas_billing_xendit.py app/services/saas_billing_settlement.py app/services/saas_billing_reconciliation.py app/workers/saas_billing_outbox_consumer.py app/routes/saas_billing_routes.py

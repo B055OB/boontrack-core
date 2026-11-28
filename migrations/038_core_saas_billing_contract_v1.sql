@@ -1,7 +1,6 @@
 -- Core SaaS Billing Contract v1.
--- New Core-owned tables only. This migration is authored for review and has NOT
--- been applied to any staging or production database.
--- Do not alter public.orders or reuse Shop-owned subscription/commission tables.
+-- Core-owned tables only. Draft migration: CI/disposable PostgreSQL only until
+-- CCC approves Staging application. Never alter public.orders or merchant tables.
 
 BEGIN;
 
@@ -42,10 +41,8 @@ CREATE TABLE IF NOT EXISTS public.saas_billing_purchases (
 CREATE UNIQUE INDEX IF NOT EXISTS uq_saas_billing_purchase_provider_invoice
     ON public.saas_billing_purchases (provider, provider_invoice_id)
     WHERE provider_invoice_id IS NOT NULL;
-
 CREATE INDEX IF NOT EXISTS idx_saas_billing_purchase_tenant_status
     ON public.saas_billing_purchases (canonical_tenant_id, payment_status, created_at DESC);
-
 CREATE INDEX IF NOT EXISTS idx_saas_billing_purchase_intent
     ON public.saas_billing_purchases (payment_intent_id);
 
@@ -66,7 +63,6 @@ CREATE TABLE IF NOT EXISTS public.saas_billing_webhook_events (
     CONSTRAINT uq_saas_billing_webhook_provider_event
         UNIQUE (provider, provider_event_id)
 );
-
 CREATE INDEX IF NOT EXISTS idx_saas_billing_webhook_purchase
     ON public.saas_billing_webhook_events (purchase_id, received_at DESC);
 
@@ -86,14 +82,18 @@ CREATE TABLE IF NOT EXISTS public.saas_billing_ledger_entries (
     catalog_version VARCHAR(64) NOT NULL,
     policy_reference VARCHAR(128),
     metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    CONSTRAINT uq_saas_billing_ledger_provider_event_kind
-        UNIQUE (provider, provider_event_id, entry_kind)
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
+-- Multi-SKU: each SKU gets its own immutable ledger row for the same provider event.
+-- Idempotency is scoped to provider event + purchase + SKU + entry kind.
+ALTER TABLE public.saas_billing_ledger_entries
+    DROP CONSTRAINT IF EXISTS uq_saas_billing_ledger_provider_event_kind;
+CREATE UNIQUE INDEX IF NOT EXISTS uq_saas_billing_ledger_event_purchase_sku_kind
+    ON public.saas_billing_ledger_entries
+       (provider, provider_event_id, purchase_id, sku, entry_kind);
 CREATE INDEX IF NOT EXISTS idx_saas_billing_ledger_tenant_created
     ON public.saas_billing_ledger_entries (canonical_tenant_id, created_at DESC);
-
 CREATE INDEX IF NOT EXISTS idx_saas_billing_ledger_purchase
     ON public.saas_billing_ledger_entries (purchase_id);
 
@@ -118,11 +118,9 @@ CREATE TABLE IF NOT EXISTS public.saas_billing_entitlement_events (
     CONSTRAINT uq_saas_entitlement_source_key
         UNIQUE (ledger_entry_id, entitlement_key)
 );
-
 CREATE INDEX IF NOT EXISTS idx_saas_entitlement_tenant_status
     ON public.saas_billing_entitlement_events (canonical_tenant_id, event_status, created_at DESC);
 
--- Financial ledger records are append-only. Corrections must use compensating entries.
 CREATE OR REPLACE FUNCTION public.reject_saas_billing_ledger_mutation()
 RETURNS TRIGGER
 LANGUAGE plpgsql
@@ -131,13 +129,11 @@ BEGIN
     RAISE EXCEPTION 'SAAS_BILLING_LEDGER_APPEND_ONLY: use a compensating entry';
 END;
 $$;
-
 DROP TRIGGER IF EXISTS trg_saas_billing_ledger_no_update ON public.saas_billing_ledger_entries;
 CREATE TRIGGER trg_saas_billing_ledger_no_update
     BEFORE UPDATE OR DELETE ON public.saas_billing_ledger_entries
     FOR EACH ROW EXECUTE FUNCTION public.reject_saas_billing_ledger_mutation();
 
--- Core services only. No anon/authenticated browser access.
 ALTER TABLE public.saas_billing_purchases ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.saas_billing_purchases FORCE ROW LEVEL SECURITY;
 ALTER TABLE public.saas_billing_webhook_events ENABLE ROW LEVEL SECURITY;
@@ -169,8 +165,7 @@ BEGIN
             ) THEN
                 EXECUTE format(
                     'CREATE POLICY %I ON public.%I AS PERMISSIVE FOR ALL TO service_role USING (true) WITH CHECK (true)',
-                    policy_name,
-                    table_name
+                    policy_name, table_name
                 );
             END IF;
             EXECUTE format('GRANT ALL ON TABLE public.%I TO service_role', table_name);

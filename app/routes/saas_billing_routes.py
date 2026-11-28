@@ -18,6 +18,7 @@ from app.services.saas_billing_auth import (
     verify_internal_saas_billing_request,
 )
 from app.services.saas_billing_xendit import SaaSXenditProfileError, SaaSXenditProvider
+from app.services.saas_billing_settlement import SaaSBillingSettlementRepository, SaaSSettlementError
 from app.services.saas_billing_catalog import (
     CatalogError,
     TaxPolicy,
@@ -182,7 +183,7 @@ async def read_saas_payment_intent(intent_id: str) -> JSONResponse:
 
 @saas_billing_router.post("/webhooks/xendit")
 async def receive_saas_xendit_webhook(request: Request) -> JSONResponse:
-    """Authenticate against the dedicated SaaS callback token; settlement is not wired yet."""
+    """Verify the dedicated SaaS callback and atomically settle only its bound sandbox purchase."""
     try:
         provider = SaaSXenditProvider()
     except SaaSXenditProfileError:
@@ -190,9 +191,18 @@ async def receive_saas_xendit_webhook(request: Request) -> JSONResponse:
     supplied = str(request.headers.get("x-callback-token", "")).strip()
     if not provider.verify_callback_token(supplied):
         return _error("BILLING_PROVIDER_CALLBACK_UNAUTHORIZED", 403)
-    # Do not accept, persist, or fulfill an event until the SaaS settlement transaction
-    # and provider event deduplication consumer are wired.
-    return _error("BILLING_SETTLEMENT_PIPELINE_UNAVAILABLE", 503, retryable=True)
+    try:
+        payload = await request.json()
+        result = SaaSBillingSettlementRepository().settle_xendit_paid_event(
+            payload,
+            credential_profile_id=provider.profile.profile_id,
+            business_id=provider.profile.business_id,
+        )
+        return JSONResponse(content=result)
+    except SaaSSettlementError as exc:
+        return _error(exc.code, exc.status_code, retryable=exc.status_code >= 500)
+    except Exception:
+        return _error("BILLING_SETTLEMENT_PIPELINE_UNAVAILABLE", 503, retryable=True)
 
 
 @saas_billing_router.post("/reconciliation/{intent_id}")

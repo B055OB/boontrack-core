@@ -261,6 +261,7 @@ def dispatch_payment_outbox_batch(
                     delivery_status, retry_count, next_retry_at, created_at
                 FROM payment_outbox_events
                 WHERE delivery_status IN ('PENDING', 'DELIVERING')
+                  AND left(event_type, 5) <> 'SAAS_'
                   AND next_retry_at <= %s
                 ORDER BY next_retry_at ASC
                 LIMIT %s
@@ -308,6 +309,7 @@ def dispatch_payment_outbox_batch(
                     status, attempt_count, created_at
                 FROM payment_outbox_events
                 WHERE status IN ('PENDING', 'DELIVERING')
+                  AND left(event_type, 5) <> 'SAAS_'
                   AND next_attempt_at <= %s
                 ORDER BY next_attempt_at ASC
                 LIMIT %s
