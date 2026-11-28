@@ -91,8 +91,8 @@ jobs:
 
       - name: Verify catalog and existing Team Scale regression tests
         run: |
-          pytest -q tests/test_saas_billing_catalog.py tests/test_subscription_pricing.py
+          pytest -q tests/test_saas_billing_catalog.py tests/test_subscription_pricing.py tests/test_saas_billing_repository.py
 
       - name: Typecheck SaaS billing schema and catalog
         run: |
-          mypy --follow-imports=silent --ignore-missing-imports app/schemas/saas_billing.py app/services/saas_billing_catalog.py
+          mypy --follow-imports=silent --ignore-missing-imports app/schemas/saas_billing.py app/services/saas_billing_catalog.py app/services/saas_billing_repository.py
