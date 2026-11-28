@@ -35,6 +35,63 @@ REQUIRED_SANDBOX_ENV = (
     "SAAS_XENDIT_SANDBOX_WEBHOOK_URL",
 )
 
+SUPABASE_STAGING_POOLER_HOST = "aws-0-ap-southeast-1.pooler.supabase.com"
+SUPABASE_STAGING_PROJECT_REF = "xkhqirhurnjqglmajghn"
+SUPABASE_STAGING_DATABASE = "postgres"
+SUPABASE_STAGING_ROLE = "saas_billing_staging_readonly"
+SUPABASE_STAGING_POOLER_USER = f"{SUPABASE_STAGING_ROLE}.{SUPABASE_STAGING_PROJECT_REF}"
+SUPABASE_PRODUCTION_PROJECT_REF = "mpluzajlzpregmjwpjqr"
+
+
+def validate_staging_target_identity(dsn: str) -> dict[str, str]:
+    """Validates that a DSN targets the explicit Supabase Staging pooler identity.
+
+    Fails closed if the DSN references Production, or if any component of the
+    verified Staging identity is missing, mismatched, or ambiguous.
+    """
+    if not dsn or not dsn.strip():
+        raise RuntimeError("SAAS_BILLING_STAGING_PREFLIGHT_DSN_NOT_CONFIGURED")
+
+    raw_dsn = dsn.strip()
+
+    # Reject Production project ref anywhere in DSN
+    if SUPABASE_PRODUCTION_PROJECT_REF in raw_dsn.lower():
+        raise RuntimeError(
+            f"PRODUCTION_TARGET_FORBIDDEN: Production project ref '{SUPABASE_PRODUCTION_PROJECT_REF}' detected in DSN"
+        )
+
+    parsed = urlparse(raw_dsn)
+    host = (parsed.hostname or "").strip().lower()
+    database = (parsed.path or "").lstrip("/").strip().lower()
+    username = (parsed.username or "").strip()
+
+    if host != SUPABASE_STAGING_POOLER_HOST:
+        raise RuntimeError(
+            f"STAGING_TARGET_HOST_MISMATCH: Expected '{SUPABASE_STAGING_POOLER_HOST}', got '{host}'"
+        )
+
+    if database != SUPABASE_STAGING_DATABASE:
+        raise RuntimeError(
+            f"STAGING_TARGET_DATABASE_MISMATCH: Expected '{SUPABASE_STAGING_DATABASE}', got '{database}'"
+        )
+
+    if username != SUPABASE_STAGING_POOLER_USER:
+        raise RuntimeError(
+            f"STAGING_TARGET_USER_MISMATCH: Expected '{SUPABASE_STAGING_POOLER_USER}', got '{username}'"
+        )
+
+    if SUPABASE_STAGING_PROJECT_REF not in username:
+        raise RuntimeError(
+            f"STAGING_TARGET_PROJECT_REF_MISSING: Expected project ref '{SUPABASE_STAGING_PROJECT_REF}' in username"
+        )
+
+    return {
+        "host": host,
+        "database": database,
+        "project_ref": SUPABASE_STAGING_PROJECT_REF,
+        "username": username,
+    }
+
 
 def _profile_readiness() -> dict[str, object]:
     present = [key for key in REQUIRED_SANDBOX_ENV if bool(os.getenv(key, "").strip())]
@@ -156,14 +213,9 @@ def _verify_staging_read_only() -> dict[str, object]:
     import psycopg2
 
     dsn = os.getenv("SAAS_BILLING_STAGING_PREFLIGHT_DSN", "").strip()
-    if not dsn:
-        raise RuntimeError("SAAS_BILLING_STAGING_PREFLIGHT_DSN_NOT_CONFIGURED")
-    parsed = urlparse(dsn)
-    host = (parsed.hostname or "").lower()
-    database = (parsed.path or "").lstrip("/").lower()
-    if not ("staging" in host or "staging" in database):
-        raise RuntimeError("STAGING_TARGET_IDENTITY_NOT_EXPLICIT")
-    conn = psycopg2.connect(dsn, connect_timeout=5, options="-c default_transaction_read_only=on")
+    target_identity = validate_staging_target_identity(dsn)
+
+    conn = psycopg2.connect(dsn, connect_timeout=15, options="-c default_transaction_read_only=on")
     try:
         conn.set_session(readonly=True, autocommit=False)
         with conn.cursor() as cur:
@@ -175,9 +227,11 @@ def _verify_staging_read_only() -> dict[str, object]:
         profile = _profile_readiness()
         return {
             "mode": "STAGING_READ_ONLY",
+            "preflight_status": "PASS",
             "database": db_name,
             "server_address": db_address,
             "database_user": db_user,
+            "target_identity": target_identity,
             **schema,
             "sandbox_profile": profile,
             "staging_ddl_executed": False,
