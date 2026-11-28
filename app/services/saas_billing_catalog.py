@@ -49,6 +49,8 @@ class CatalogEntry:
     sellable: bool = True
     dependency_keys: tuple[str, ...] = ()
     entitlement_validity_days: int | None = None
+    is_default_checkout: bool = False
+    campaign_key: str | None = None
 
 
 @dataclass(frozen=True)
@@ -154,6 +156,7 @@ CATALOG: tuple[CatalogEntry, ...] = (
         approval_state=CatalogApprovalState.APPROVED, cadence=BillingCadence.ANNUAL,
         amount_idr=99000, entitlement_key="STUDIO_CREDITS",
         credit_units=100, entitlement_validity_days=365, sellable=True,
+        is_default_checkout=True,
     ),
     CatalogEntry(
         product=SaaSProduct.STUDIO, sku="STUDIO-ANNUAL-299K",
@@ -162,6 +165,7 @@ CATALOG: tuple[CatalogEntry, ...] = (
         approval_state=CatalogApprovalState.APPROVED, cadence=BillingCadence.ANNUAL,
         amount_idr=299000, entitlement_key="STUDIO_CREDITS",
         credit_units=500, entitlement_validity_days=365, sellable=True,
+        campaign_key="ONLINEBOOST_CAMPAIGN",
     ),
 )
 
@@ -219,6 +223,7 @@ def quote_catalog_items(
             SaaSQuoteLine(
                 sku=entry.sku,
                 item_kind=entry.item_kind,
+                cadence=entry.cadence,
                 quantity=item.quantity,
                 unit_amount_idr=entry.amount_idr,
                 line_amount_idr=line_amount,
@@ -227,6 +232,9 @@ def quote_catalog_items(
                 credit_validity_months=entry.credit_validity_months,
             )
         )
+
+    if shop_has_package and shop_has_addon:
+        raise CatalogError("BILLING_BUNDLE_MAPPING_PENDING")
 
     tax_amount, total = tax_policy.calculate(subtotal)
     tax_approved = tax_policy.status.upper() == "APPROVED"
