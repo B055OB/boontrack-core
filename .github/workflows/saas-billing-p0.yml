@@ -1,0 +1,41 @@
+name: SaaS Billing P0 — Catalog and Team Scale
+
+on:
+  push:
+    branches:
+      - feat/core-saas-billing-contract-v1
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  saas-billing-p0:
+    name: Verify SaaS catalog, legacy Team Scale, and targeted typing
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout exact pushed commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install project and verification dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install --prefer-binary -r requirements.txt
+          pip install pytest mypy
+
+      - name: Verify catalog and existing Team Scale regression tests
+        run: |
+          pytest -q tests/test_saas_billing_catalog.py tests/test_subscription_pricing.py
+
+      - name: Typecheck SaaS billing schema and catalog
+        run: |
+          mypy --follow-imports=silent --ignore-missing-imports app/schemas/saas_billing.py app/services/saas_billing_catalog.py
