@@ -299,8 +299,23 @@ async def ingest_whatsapp_webhook(
                         if isinstance(val, dict):
                             if val.get("messages"):
                                 has_messages = True
-                            if val.get("statuses"):
+                            st_list = val.get("statuses")
+                            if isinstance(st_list, list) and st_list:
                                 has_statuses = True
+                                for st in st_list:
+                                    if isinstance(st, dict):
+                                        st_status = str(st.get("status") or "").lower()
+                                        st_id = st.get("id")
+                                        st_recipient = st.get("recipient_id")
+                                        if st_status == "failed":
+                                            st_errors = st.get("errors")
+                                            logger.error(
+                                                f"[WHATSAPP STATUS FAILED] wamid={st_id} recipient={st_recipient} errors={st_errors}"
+                                            )
+                                        elif st_status in ("sent", "delivered"):
+                                            logger.info(
+                                                f"[WHATSAPP STATUS {st_status.upper()}] wamid={st_id} recipient={st_recipient}"
+                                            )
 
         if has_statuses and not has_messages:
             logger.debug("[WHATSAPP WEBHOOK] Status update acknowledged (no message payload).")

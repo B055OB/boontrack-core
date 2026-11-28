@@ -38,22 +38,27 @@ def generate_qris_png_buffer(
     if not qr_string or not isinstance(qr_string, str):
         raise ValueError("qr_string must be a non-empty string")
 
+    effective_border = max(4, border)
     qr = qrcode.QRCode(
         version=None,
         error_correction=error_correction,
         box_size=box_size,
-        border=border,
+        border=effective_border,
     )
     qr.add_data(qr_string.strip())
     qr.make(fit=True)
     img = qr.make_image(fill_color="black", back_color="white")
 
     from PIL import Image
-    if hasattr(img, "size") and (img.size[0] < 500 or img.size[1] < 500):
-        img = img.resize((540, 540), Image.Resampling.NEAREST)
+    pil_img = img.get_image() if hasattr(img, "get_image") else img
+    pil_img = pil_img.convert("RGB")
+
+    # Anti dark-mode & Meta Cloud API resolution compliance: ensure >= 600x600 px
+    if pil_img.size[0] < 600 or pil_img.size[1] < 600:
+        pil_img = pil_img.resize((600, 600), Image.Resampling.NEAREST)
 
     buffer = io.BytesIO()
-    img.save(buffer, format="PNG")
+    pil_img.save(buffer, format="PNG")
     buffer.seek(0)
     return buffer
 

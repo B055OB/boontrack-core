@@ -101,37 +101,45 @@ generate_dynamic_qris = generate_dynamic_qris_payload
 
 
 def render_qris_bytes(payload: str, box_size: int = 10, border: int = 4) -> bytes:
-    """Render matriks QR ke in-memory byte buffer (io.BytesIO) PNG resolusi tinggi (>= 500x500 px)."""
+    """Render matriks QR ke in-memory byte buffer (io.BytesIO) PNG resolusi tinggi (>= 600x600 px, 8-bit RGB)."""
     clean_payload = (payload or "").strip()
     if not clean_payload.startswith("000201"):
         raise ValueError("MERCHANT_QRIS_NOT_CONFIGURED: Invalid or missing QRIS payload to render")
 
+    effective_border = max(4, border)
     try:
         qr = qrcode.QRCode(
             version=None,
             error_correction=ERROR_CORRECT_M,
             box_size=box_size,
-            border=border,
+            border=effective_border,
         )
         qr.add_data(clean_payload)
         qr.make(fit=True)
         img = qr.make_image(fill_color="black", back_color="white")
 
-        # Pastikan ukuran gambar minimal 500x500 pixel untuk ketajaman scan kamera & m-banking gallery
-        if hasattr(img, "size") and (img.size[0] < 500 or img.size[1] < 500):
-            img = img.resize((540, 540), Image.Resampling.NEAREST)
+        pil_img = img.get_image() if hasattr(img, "get_image") else img
+        pil_img = pil_img.convert("RGB")
+
+        # Pastikan ukuran gambar minimal 600x600 pixel untuk ketajaman scan kamera & m-banking gallery
+        if hasattr(pil_img, "size") and (pil_img.size[0] < 600 or pil_img.size[1] < 600):
+            pil_img = pil_img.resize((600, 600), Image.Resampling.NEAREST)
 
         buffer = io.BytesIO()
-        img.save(buffer, format="PNG")
+        pil_img.save(buffer, format="PNG")
         return buffer.getvalue()
     except Exception:
         # Fallback generator sederhana jika terjadi issue resize/pillow
-        qr = qrcode.QRCode(box_size=box_size, border=border)
+        qr = qrcode.QRCode(box_size=box_size, border=effective_border)
         qr.add_data(clean_payload)
         qr.make(fit=True)
         img = qr.make_image(fill_color="black", back_color="white")
+        pil_img = img.get_image() if hasattr(img, "get_image") else img
+        pil_img = pil_img.convert("RGB")
+        if hasattr(pil_img, "size") and (pil_img.size[0] < 600 or pil_img.size[1] < 600):
+            pil_img = pil_img.resize((600, 600), Image.Resampling.NEAREST)
         buffer = io.BytesIO()
-        img.save(buffer, format="PNG")
+        pil_img.save(buffer, format="PNG")
         return buffer.getvalue()
 
 

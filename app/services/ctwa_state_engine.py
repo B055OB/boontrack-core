@@ -599,6 +599,29 @@ class CTWAStateEngine:
                 phone_number_id=phone_number_id,
             )
 
+        # Kirim pesan teks ringkas terpisah berisi Order ID, nominal unik persis, dan invoice_url Xendit
+        # sebagai cadangan sekaligus indikator bahwa jalur kirim teks WA normal
+        try:
+            backup_text = (
+                f"💳 *Detail Tagihan Pembayaran:*\n"
+                f"• No. Order: `{order_id}`\n"
+                f"• Total Bayar: *Rp {total_formatted}*\n\n"
+                f"👉 Link Pembayaran Alternatif:\n{invoice_url}"
+            ) if invoice_url else (
+                f"💳 *Detail Tagihan Pembayaran:*\n"
+                f"• No. Order: `{order_id}`\n"
+                f"• Total Bayar: *Rp {total_formatted}*"
+            )
+            await cloud_api.send_whatsapp_text(
+                to_phone=clean_phone,
+                text=backup_text,
+                tenant_id="onlineboost",
+                phone_number_id=phone_number_id,
+            )
+            logger.info(f"[GATEKEEPER] Backup payment text dispatched to {clean_phone} for Order {order_id}")
+        except Exception as txt_err:
+            logger.warning(f"[GATEKEEPER] Backup payment text send note: {txt_err}")
+
         # 5. Dispatch server-side event Meta CAPI InitiateCheckout
         capi_res = None
         try:
