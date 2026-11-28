@@ -49,19 +49,32 @@ The authoritative catalog is versioned and served by Core. Each entry contains:
 
 No amount is accepted from the client. A quote is derived only from the catalog version and SKU list held by Core.
 
-### 3.1 Current price decisions
+### 3.1 Founder-approved Staging price book — 28 November 2026
 
-Studio Pricing v3 has Founder-ratified top-up mappings:
-- STUDIO_TOPUP_KETENGAN_50: 50 credits, Rp25,000.
-- STUDIO_TOPUP_STARTER_200: 200 credits, Rp89,000.
-- STUDIO_TOPUP_KREATOR_500: 500 credits, Rp199,000.
-- STUDIO_TOPUP_PRO_AGENCY_1000: 1,000 credits, Rp349,000.
-- Credit validity: 12 months.
-- Usage metering: Naskah 10 credits; Image Carousel (5 slides) 25 credits; Video 50 credits. These are usage tariffs, not payment products.
+Studio:
+- `STUDIO-MONTHLY-29K`: Rp29,000; monthly; 25 credits; 30-day validity.
+- `STUDIO-ANNUAL-99K`: Rp99,000; annual; 100 credits; 365-day validity; default checkout.
+- `STUDIO-ANNUAL-299K`: Rp299,000; annual; 500 credits; 365-day validity; campaign key `ONLINEBOOST_CAMPAIGN`.
 
-Shop FREE_FOREVER is Rp0 and does not create a payment intent. Shop Growth, Ads Performance, Team Scale and paid add-on pricing remain non-sellable until the corresponding CFO price decision is approved and recorded in the Core catalog. Proposed prices are not treated as approvals.
+Shop sellable Staging catalog:
+- Free Forever: Rp0, lifetime/free base entitlement; no payment intent.
+- Starter / Shop Growth Bundle: Rp99,000 monthly.
+- Ads Performance: Rp299,000 monthly.
+- Dynamic QRIS: Rp39,000 monthly.
+- SmartChatbox / Multi-CS: Rp149,000 monthly.
+- AI Auto-Reply (300 replies): Rp199,000 monthly.
+- Booking Pro: Rp49,000 monthly.
+- WABA Official: Rp149,000 monthly; Meta fees are a separate pass-through and are not included in this SKU price.
 
-The tax display and tax calculation policy must be explicit in the catalog before a live checkout can be enabled. Until ratified, the quote may report the approved catalog price but must carry TAX_POLICY_PENDING and must not be used to create a live provider invoice.
+Shop Team Scale (Rp499,000 proposal), WhatsApp Non-WABA / Scan Barcode, Frontpage E-Commerce/Microsite/Web Profile templates, Affiliate Domain, and Offline Event Upload are HOLD. They are absent from the purchasable catalog; do not create active SKUs, checkout controls, or upsells for them.
+
+The Founder directive does not specify the exact entitlement inclusions of Starter or Ads Performance. Until Product ratifies a tier-to-add-on inclusion map, Core rejects a quote combining a Shop package/base tier and any standalone add-on with `BILLING_BUNDLE_MAPPING_PENDING`. Repeated entitlement keys are also rejected. This is a quote-level fail-closed guard, not yet a substitute for checking existing effective tenant entitlements in the durable repository before intent creation.
+
+SmartChatbox's directed product scope includes WhatsApp, Instagram DM, Facebook Messenger, Threads, TikTok DM, and Web Chat. This is a product scope statement, not a claim that each connector, provider dependency, agent capacity, or quota is currently production-ready. Product/Core must ratify channel definitions, WABA versus non-WABA treatment, agent limits, quotas, and provider dependencies before public sale.
+
+Monthly entitlements are designed for 30 calendar days and annual entitlements for 365 calendar days. These durations must be applied only where the product entitlement contract calls for them. The 365-day and perpetual rules for Affiliate Domain and Frontpage templates remain design notes while those items are HOLD.
+
+Tax policy remains `TAX_POLICY_PENDING`. Approved Staging prices do not authorize live invoice creation or bypass the tax gate.
 
 ## 4. API contract
 
