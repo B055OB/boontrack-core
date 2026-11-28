@@ -63,8 +63,12 @@ def verify_internal_saas_billing_request(
     env = environ if environ is not None else os.environ
     if quote.product != quote_request.product:
         raise SaaSBillingAuthorizationError("BILLING_PRODUCT_MISMATCH", 403)
-    if not quote.payment_intent_allowed or quote.total_idr is None:
-        raise CatalogError("BILLING_TAX_POLICY_PENDING")
+    # Quotes remain readable while tax policy is pending. Bind the signed request to
+    # the deterministic subtotal in that case; payment-intent callers enforce the
+    # hard TAX_POLICY_PENDING gate after authentication.
+    signed_amount = quote.total_idr if quote.total_idr is not None else quote.subtotal_idr
+    if isinstance(signed_amount, bool) or not isinstance(signed_amount, int) or signed_amount <= 0:
+        raise CatalogError("BILLING_QUOTE_AMOUNT_INVALID")
 
     normalized_headers = {str(k).strip().lower(): str(v).strip() for k, v in headers.items()}
     tenant_hint = normalized_headers.get("x-tenant-id", "")
@@ -94,7 +98,7 @@ def verify_internal_saas_billing_request(
             canonical_path=canonical_path,
             order_id=request_reference,
             tenant_id_or_slug=tenant_hint,
-            derived_amount=quote.total_idr,
+            derived_amount=signed_amount,
             sku_id=",".join(line.sku for line in quote.lines),
             raw_body=raw_body,
             db_connection_factory=db_connection_factory,
