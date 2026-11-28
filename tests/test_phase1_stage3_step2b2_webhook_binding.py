@@ -588,14 +588,14 @@ async def test_s3_t08_ghost_order_auto_creation_prevention():
     assert code_mid in (401, 404)
     assert res_mid["error_code"] in ("ORDER_NOT_FOUND", "INVALID_WEBHOOK_SIGNATURE")
 
-    # Xendit with ghost order
+    # Xendit with ghost order (anti-oracle rejects tenantless unmatched order fail-closed with 403 INVALID_WEBHOOK_TOKEN)
     res_xen = await process_xendit_webhook_core({
         "external_id": ghost_order_id,
         "amount": 249000,
         "status": "PAID",
     }, {"x-callback-token": XENDIT_TOKEN_ALPHA})
-    assert res_xen["http_status"] == 404
-    assert res_xen["response"]["error_code"] == "ORDER_NOT_FOUND"
+    assert res_xen["http_status"] == 403
+    assert res_xen["response"]["error_code"] == "INVALID_WEBHOOK_TOKEN"
 
     # Duitku with ghost order
     res_dk, code_dk = await process_duitku_callback_core({

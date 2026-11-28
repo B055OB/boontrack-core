@@ -13,6 +13,7 @@ from app.payments.schemas import (
     PaymentIntentCreate,
     WebhookEventPayload,
     PaymentStatus,
+    validate_monetary_amount,
 )
 from app.utils.qris_generator import get_quickchart_qr_url
 
@@ -155,7 +156,7 @@ class DuitkuPaymentAdapter(BasePaymentProvider):
             provider="DUITKU",
             event_type=event_type,
             provider_ref=reference or f"duitku_ref_{order_id}",
-            amount=int(float(amount)),
+            amount=int(validate_monetary_amount(amount)),
             order_id=order_id,
             tenant_id=payload.get("tenant_id"),
             idempotency_key=f"duitku_{reference or order_id}",

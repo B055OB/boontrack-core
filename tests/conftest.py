@@ -32,6 +32,56 @@ from app.core.security.test_isolation_guard import (  # noqa: E402
 # Enforce isolated `.env.test` + driver backstop hooks BEFORE any `app.*` import
 bootstrap_isolated_test_env(repo_root=_REPO_ROOT)
 
+# Runtime synthetic Ed25519 provenance keypair fixture (Wave 1C / REM-04)
+# Generated purely at runtime in memory without persisting any private key to disk or .env.test.
+def _generate_synthetic_test_provenance_keyrings() -> tuple[str, str]:
+    """Deterministically derive synthetic Ed25519 test keyrings purely at runtime in memory.
+
+    Zero keys are stored in .env.test, source files, or persisted artifacts.
+    """
+    import hashlib
+    import json
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+    from cryptography.hazmat.primitives import serialization
+
+    # Deterministic test seed (32 bytes)
+    seed = hashlib.sha256(b"boontrack_runtime_synthetic_provenance_keyring_fixture_v1").digest()
+    priv = Ed25519PrivateKey.from_private_bytes(seed)
+    priv_hex = seed.hex()
+    pub_hex = priv.public_key().public_bytes(
+        encoding=serialization.Encoding.Raw,
+        format=serialization.PublicFormat.Raw,
+    ).hex()
+
+    priv_keyring = json.dumps({
+        "prv_synthetic_test_v1": {
+            "private_key_hex": priv_hex,
+            "status": "ACTIVE",
+        }
+    })
+    pub_keyring = json.dumps({
+        "prv_synthetic_test_v1": {
+            "public_key_hex": pub_hex,
+            "status": "ACTIVE",
+        }
+    })
+    return priv_keyring, pub_keyring
+
+
+_SYNTHETIC_PRIV_KEYRING, _SYNTHETIC_PUB_KEYRING = _generate_synthetic_test_provenance_keyrings()
+
+# Inject into environment if not present
+if "PAYMENT_PROVENANCE_SIGNING_PRIVATE_KEYRING_JSON" not in os.environ:
+    os.environ["PAYMENT_PROVENANCE_SIGNING_PRIVATE_KEYRING_JSON"] = _SYNTHETIC_PRIV_KEYRING
+if "PAYMENT_PROVENANCE_VERIFY_PUBLIC_KEYRING_JSON" not in os.environ:
+    os.environ["PAYMENT_PROVENANCE_VERIFY_PUBLIC_KEYRING_JSON"] = _SYNTHETIC_PUB_KEYRING
+
+# Live environment safety guard: purge any accidentally inherited live host credentials
+for _live_prefix in ("xnd_production_", "Mid-server-"):
+    for _env_k, _env_v in list(os.environ.items()):
+        if _env_v and _live_prefix in str(_env_v):
+            os.environ.pop(_env_k, None)
+
 # Ensure app.core.config.settings (once imported) matches validated env
 try:
     from app.core.config import settings
@@ -116,3 +166,27 @@ def pytest_sessionstart(session: pytest.Session) -> None:
             f"[TEST ISOLATION ABORT] Disposable Redis unavailable under strict service requirement: {exc}",
             returncode=2,
         )
+
+
+@pytest.fixture(autouse=True)
+def ensure_test_provenance_isolation():
+    """Ensure deterministic synthetic provenance keyrings are restored after tests.
+
+    Tests that delete or override keys via monkeypatch are fully respected during the test,
+    and the runtime baseline is restored at teardown.
+    """
+    yield
+    # Restore default synthetic keyrings if removed during tests without monkeypatch
+    if "PAYMENT_PROVENANCE_SIGNING_PRIVATE_KEYRING_JSON" not in os.environ:
+        os.environ["PAYMENT_PROVENANCE_SIGNING_PRIVATE_KEYRING_JSON"] = _SYNTHETIC_PRIV_KEYRING
+    if "PAYMENT_PROVENANCE_VERIFY_PUBLIC_KEYRING_JSON" not in os.environ:
+        os.environ["PAYMENT_PROVENANCE_VERIFY_PUBLIC_KEYRING_JSON"] = _SYNTHETIC_PUB_KEYRING
+
+
+@pytest.fixture
+def runtime_synthetic_provenance_keypair() -> dict[str, str]:
+    """Provides the active deterministic synthetic Ed25519 test keypair mapping."""
+    return {
+        "private_keyring_json": _SYNTHETIC_PRIV_KEYRING,
+        "public_keyring_json": _SYNTHETIC_PUB_KEYRING,
+    }

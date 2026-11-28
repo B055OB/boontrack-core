@@ -1,7 +1,8 @@
 import os
+import hmac
 import asyncio
 import logging
-from typing import Dict, Any
+from typing import Dict, Any, Mapping, Optional
 from fastapi import APIRouter, Request, BackgroundTasks
 from aiohttp import web
 from app.services.payment_orchestrator import PaymentOrchestrator
@@ -44,13 +45,18 @@ def get_admin_supabase_client() -> Client:
     return create_client(supabase_url, admin_key)
 
 
-def get_verified_webhook_supabase_client(headers: Dict[str, str]) -> Client:
+def get_verified_webhook_supabase_client(headers: Mapping[str, str]) -> Client:
     """Returns administrative client ONLY if inbound request contains a valid x-callback-token.
     Enforces that unverified callers cannot acquire administrative service_role access.
     """
     configured_token = os.getenv("XENDIT_CALLBACK_TOKEN", "").strip()
-    inbound_token = headers.get("x-callback-token") or headers.get("X-CALLBACK-TOKEN")
-    if not configured_token or inbound_token != configured_token:
+    inbound_token = ""
+    if isinstance(headers, Mapping):
+        for k, v in headers.items():
+            if str(k).strip().lower() == "x-callback-token" and v is not None:
+                inbound_token = str(v).strip()
+                break
+    if not configured_token or not inbound_token or not hmac.compare_digest(inbound_token, configured_token):
         raise PermissionError(
             "[SECURITY BOUNDARY] Access to administrative Supabase client denied: Invalid or missing x-callback-token."
         )
@@ -74,70 +80,34 @@ async def background_delivery_and_notify(job_payload: Dict[str, Any]):
     await wa_service.send_digital_product_delivery(job_payload)
 
 # ---------------------------------------------------------
-# FASTAPI ROUTER
+# FASTAPI ROUTER (Deduplicated — canonical /webhook/xendit lives on xendit_router)
 # ---------------------------------------------------------
 router = APIRouter(prefix="/webhook", tags=["Payments"])
 
-@router.post("/xendit")
-async def xendit_payment_webhook(request: Request, background_tasks: BackgroundTasks):
-    from fastapi import HTTPException
-    from app.routes.xendit import process_xendit_webhook_core
-    headers_dict = dict(request.headers)
 
-    # STRICT FAIL-CLOSED AUTHENTICATION & PRIVILEGE GUARD BEFORE MUTATION
-    try:
-        admin_sb = get_verified_webhook_supabase_client(headers_dict)
-        logger.info("[Webhook FastAPI] Admin Supabase client authorized for verified webhook settlement.")
-    except PermissionError as auth_err:
-        logger.warning(f"[Webhook FastAPI] Unauthorized webhook rejected fail-closed: {auth_err}")
-        raise HTTPException(status_code=403, detail=str(auth_err))
+async def xendit_payment_webhook(request: Request, background_tasks: Optional[BackgroundTasks] = None):
+    """Deprecated compatibility delegate forwarding directly to canonical Xendit webhook handler."""
+    from app.routes.xendit import xendit_webhook_callback
+    return await xendit_webhook_callback(request)
 
-    try:
-        payload = await request.json()
-    except Exception as e:
-        logger.error(f"[Webhook FastAPI] Failed to parse JSON: {str(e)}")
-        raise HTTPException(status_code=400, detail="Invalid JSON payload")
-
-    result = await process_xendit_webhook_core(payload, headers_dict)
-    http_code = result.get("http_status", 200)
-    response_body = result.get("response", {})
-    if http_code != 200:
-        raise HTTPException(status_code=http_code, detail=response_body.get("error", "Webhook processing failed"))
-
-    return response_body
 
 # ---------------------------------------------------------
 # AIOHTTP HANDLER & REGISTRATION (Runtime Railway)
 # ---------------------------------------------------------
 async def aiohttp_xendit_webhook_handler(request: web.Request) -> web.Response:
-    from app.routes.xendit import process_xendit_webhook_core
-    headers_dict = {k.lower(): v for k, v in request.headers.items()}
+    """Compatibility delegate forwarding directly to canonical aiohttp Xendit webhook handler."""
+    from app.routes.xendit import aiohttp_xendit_webhook
+    return await aiohttp_xendit_webhook(request)
 
-    # STRICT FAIL-CLOSED AUTHENTICATION & PRIVILEGE GUARD BEFORE MUTATION
-    try:
-        admin_sb = get_verified_webhook_supabase_client(headers_dict)
-        logger.info("[Webhook aiohttp] Admin Supabase client authorized for verified webhook settlement.")
-    except PermissionError as auth_err:
-        logger.warning(f"[Webhook aiohttp] Unauthorized webhook rejected fail-closed: {auth_err}")
-        return web.json_response({"error": str(auth_err)}, status=403)
-
-    try:
-        payload = await request.json()
-    except Exception as e:
-        logger.error(f"[Webhook aiohttp] Failed to parse JSON: {str(e)}")
-        return web.json_response({"error": "Invalid JSON payload"}, status=400)
-
-    result = await process_xendit_webhook_core(payload, headers_dict)
-    http_code = result.get("http_status", 200)
-    response_body = result.get("response", {})
-    if http_code != 200:
-        return web.json_response(response_body, status=http_code)
-
-    return web.json_response(response_body, status=200)
 
 def register_webhook_payment_routes(aiohttp_app: web.Application):
-    """Mendaftarkan route langsung ke engine aiohttp"""
-    existing = {getattr(r, "path", "") for r in aiohttp_app.router.routes()}
-    if '/webhook/xendit' not in existing:
-        aiohttp_app.router.add_post('/webhook/xendit', aiohttp_xendit_webhook_handler)
-    logger.info("[BOOT] Webhook Xendit route registered to aiohttp engine at /webhook/xendit")
+    """Register canonical /webhook/xendit on aiohttp only if not already registered."""
+    from app.routes.xendit import aiohttp_xendit_webhook
+    existing = {
+        getattr(getattr(r, "resource", None), "canonical", "")
+        for r in aiohttp_app.router.routes()
+        if getattr(r, "method", None) == "POST"
+    }
+    if "/webhook/xendit" not in existing:
+        aiohttp_app.router.add_post("/webhook/xendit", aiohttp_xendit_webhook)
+        logger.info("[BOOT] Webhook Xendit route registered to aiohttp engine at /webhook/xendit")

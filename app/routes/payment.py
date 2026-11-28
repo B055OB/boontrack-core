@@ -11,7 +11,7 @@ from uuid import uuid4
 from pydantic import BaseModel, Field
 from datetime import datetime, timezone
 from fastapi import APIRouter, HTTPException, Path, Body, status, Request, BackgroundTasks
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 
 from app.core.database import get_db_connection, normalize_db_row, track_event
 from app.services.whatsapp_service import send_whatsapp_text, send_ereceipt_whatsapp, get_supabase
@@ -25,6 +25,7 @@ from app.services.tracking_service import dispatch_all_capi
 from app.services.meta_capi_service import send_meta_capi_purchase
 from app.payments.matcher import extract_clean_dana_amount, match_and_fulfill_payment
 from app.core.redis import acquire_payment_lock, release_payment_lock
+from app.core.security.masking import sanitize_log_message
 from app.core.security.payment_auth_guard import (
     CredentialProfileMapper,
     PaymentAuthorizationError,
@@ -35,7 +36,6 @@ from app.core.security.provenance_authority import (
     commit_verified_settlement_transaction,
     ProvenanceSigner,
     ProvenanceVerifier,
-    ProvenanceSigningKeyring,
     SettlementProvenanceError,
 )
 
@@ -44,33 +44,11 @@ logger = logging.getLogger(__name__)
 # FastAPI Router untuk Payment & QRIS Test
 payment_router = APIRouter(tags=["Payment QRIS"])
 
-_PROV_SIGNER: Optional[ProvenanceSigner] = None
-_PROV_VERIFIER: Optional[ProvenanceVerifier] = None
-
 
 def _get_provenance_signer_and_verifier() -> Tuple[ProvenanceSigner, ProvenanceVerifier]:
-    global _PROV_SIGNER, _PROV_VERIFIER
-    raw_env = os.getenv("PAYMENT_PROVENANCE_SIGNING_PRIVATE_KEYRING_JSON", "").strip()
-    if raw_env:
-        try:
-            keyring = ProvenanceSigningKeyring.from_env()
-            verify_keyring = keyring.export_public_verification_keyring()
-            return ProvenanceSigner(keyring), ProvenanceVerifier(verify_keyring)
-        except Exception as exc:
-            logger.warning(f"[Provenance Keyring Load Warning] {exc}")
-    if _PROV_SIGNER is None:
-        from cryptography.hazmat.primitives import serialization
-        from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
-        priv = Ed25519PrivateKey.generate()
-        priv_hex = priv.private_bytes(
-            encoding=serialization.Encoding.Raw,
-            format=serialization.PrivateFormat.Raw,
-            encryption_algorithm=serialization.NoEncryption(),
-        ).hex()
-        keyring = ProvenanceSigningKeyring({"dev-midtrans-key": {"private_key_hex": priv_hex, "status": "ACTIVE"}})
-        _PROV_SIGNER = ProvenanceSigner(keyring)
-        _PROV_VERIFIER = ProvenanceVerifier(keyring.export_public_verification_keyring())
-    return _PROV_SIGNER, _PROV_VERIFIER
+    from app.routes.xendit import _get_provenance_signer_and_verifier as _shared_get_provenance_signer_and_verifier
+
+    return _shared_get_provenance_signer_and_verifier()
 
 
 class CreateDynamicQRISRequest(BaseModel):
@@ -569,8 +547,8 @@ async def handle_midtrans_notification_logic(payload: Dict[str, Any]) -> tuple[D
         }, http_code
 
     # Step 7: Atomic Settlement Persistence
-    signer, verifier = _get_provenance_signer_and_verifier()
     try:
+        signer, verifier = _get_provenance_signer_and_verifier()
         commit_res = commit_verified_settlement_transaction(
             capability=capability,
             signer=signer,
@@ -579,12 +557,13 @@ async def handle_midtrans_notification_logic(payload: Dict[str, Any]) -> tuple[D
             db_conn_factory=get_db_connection,
         )
     except SettlementProvenanceError as prov_err:
-        logger.error(f"[Midtrans Settlement Persistence Error] {prov_err}")
+        safe_prov_err = sanitize_log_message(str(prov_err))
+        logger.error(f"[Midtrans Settlement Persistence Error] {safe_prov_err}")
         http_code = getattr(prov_err, "http_status", 500) or 500
         return {
             "status": "error",
             "error_code": prov_err.error_code,
-            "detail": str(prov_err),
+            "detail": safe_prov_err,
         }, http_code
 
     # Step 8: Evaluate Result
@@ -628,7 +607,7 @@ async def midtrans_webhook_fastapi(
 # ============================================================================
 
 async def handle_xendit_notification_logic(
-    payload: Dict[str, Any],
+    payload: Any,
     headers: Optional[Dict[str, str]] = None,
 ) -> tuple[Dict[str, Any], int]:
     """Memproses webhook notifikasi dari Xendit dengan validasi token resmi via process_xendit_webhook_core."""
@@ -642,13 +621,25 @@ async def handle_xendit_notification_logic(
 @payment_router.post("/api/webhook/payment/xendit", summary="Xendit Webhook Notification Alias 3")
 async def xendit_webhook_fastapi(
     request: Request,
-    payload: Dict[str, Any] = Body(...),
 ):
     """FastAPI route handler untuk Xendit webhook notifications."""
+    from app.routes.xendit import _build_invalid_json_payload_response
+
+    try:
+        payload = await request.json()
+    except Exception as err:
+        logger.error(f"[Xendit Webhook] Malformed JSON: {err}")
+        bad = _build_invalid_json_payload_response()
+        return JSONResponse(status_code=bad["http_status"], content=bad["response"])
+
+    if not isinstance(payload, dict):
+        logger.warning(f"[Xendit Webhook] Rejected non-object JSON payload: {type(payload).__name__}")
+        bad = _build_invalid_json_payload_response()
+        return JSONResponse(status_code=bad["http_status"], content=bad["response"])
+
     res, status_code = await handle_xendit_notification_logic(payload, dict(request.headers))
     if status_code != 200:
-        err_detail = res.get("detail") or res.get("error") or res.get("error_code") or str(res)
-        raise HTTPException(status_code=status_code, detail=err_detail)
+        return JSONResponse(status_code=status_code, content=res)
     return res
 
 
@@ -810,10 +801,20 @@ def register_payment_routes(app: web.Application):
 
     # Endpoint webhook Xendit
     async def _aiohttp_xendit_webhook(req: web.Request):
+        from app.routes.xendit import _build_invalid_json_payload_response
+
         try:
             data = await req.json()
-        except Exception:
-            data = {}
+        except Exception as err:
+            logger.error(f"[Xendit aiohttp] Malformed JSON: {err}")
+            bad = _build_invalid_json_payload_response()
+            return web.json_response(bad["response"], status=bad["http_status"])
+
+        if not isinstance(data, dict):
+            logger.warning(f"[Xendit aiohttp] Rejected non-object JSON payload: {type(data).__name__}")
+            bad = _build_invalid_json_payload_response()
+            return web.json_response(bad["response"], status=bad["http_status"])
+
         headers = {k.lower(): v for k, v in req.headers.items()}
         res, status_code = await handle_xendit_notification_logic(data, headers)
         return web.json_response(res, status=status_code)

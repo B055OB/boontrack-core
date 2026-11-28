@@ -37,7 +37,7 @@ from app.utils.qris_generator import (
     get_qr_code_image_url,
     generate_unique_code,
 )
-from app.services.whatsapp.cloud_api import send_whatsapp_text
+from app.services.whatsapp.cloud_api import send_whatsapp_text, send_whatsapp_flow
 from app.services.whatsapp_service import normalize_phone_number, get_supabase
 
 logger = logging.getLogger("ACADEMY_SERVICE")
@@ -2399,22 +2399,44 @@ class AcademyBotStateMachine:
                         campaign="onlineboost_batch1",
                         tenant_id=tenant_id,
                     )
-                    try:
-                        await send_whatsapp_text(
-                            to_phone=clean_phone,
-                            text=ALUMNI_MAU_GREETING,
-                            tenant_id=tenant_id,
-                            phone_number_id=phone_number_id,
-                        )
-                    except Exception as e:
-                        logger.warning(f"[AcademyState0] WhatsApp send note: {e}")
+                    flow_dispatched = False
+                    effective_tenant = str(session.get("tenant_id") or tenant_id or "onlineboost").strip().lower()
+                    if effective_tenant == "onlineboost":
+                        try:
+                            flow_res = await send_whatsapp_flow(
+                                to_phone=clean_phone,
+                                flow_id=os.getenv("ONLINEBOOST_FLOW_ID") or os.getenv("FLOW_ID_ONLINEBOOST") or "1663739061907747",
+                                flow_token="onlineboost_batch1_reg",
+                                flow_cta="Daftar & Amankan Slot",
+                                header_text="OnlineBoost Batch 1",
+                                body_text=f"Halo Kak {resolved_name}! Terima kasih sudah merespons. Klik tombol di bawah untuk mengisi data dan mengamankan slot kelas praktikum Anda:",
+                                flow_action="navigate",
+                                flow_action_payload={"screen": "REGISTRATION"},
+                                tenant_id=tenant_id,
+                                phone_number_id=phone_number_id,
+                            )
+                            if flow_res and flow_res.get("messages"):
+                                flow_dispatched = True
+                        except Exception as flow_err:
+                            logger.warning(f"[AcademyState0] WhatsApp flow send failed for alumni MAU, fallback to text: {flow_err}")
+
+                    if not flow_dispatched:
+                        try:
+                            await send_whatsapp_text(
+                                to_phone=clean_phone,
+                                text=ALUMNI_MAU_GREETING,
+                                tenant_id=tenant_id,
+                                phone_number_id=phone_number_id,
+                            )
+                        except Exception as e:
+                            logger.warning(f"[AcademyState0] WhatsApp send note: {e}")
 
                     return {
                         "handled": True,
                         "state": STATE_QUALIFYING,
                         "action": "ALUMNI_MAU_QUALIFY",
                         "campaign": "onlineboost_batch1",
-                        "reply": ALUMNI_MAU_GREETING,
+                        "reply": "WHATSAPP_FLOW_DISPATCHED" if flow_dispatched else ALUMNI_MAU_GREETING,
                         "customer_name": resolved_name,
                         "tenant_id": tenant_id,
                     }
@@ -2645,6 +2667,26 @@ class AcademyBotStateMachine:
                             fallback_state=current_state or STATE_CONSULTATION,
                         )
 
+                    flow_dispatched = False
+                    if effective_tenant == "onlineboost" and not (extracted_email and name_line_match):
+                        try:
+                            flow_res = await send_whatsapp_flow(
+                                to_phone=clean_phone,
+                                flow_id=os.getenv("ONLINEBOOST_FLOW_ID") or os.getenv("FLOW_ID_ONLINEBOOST") or "1663739061907747",
+                                flow_token="onlineboost_batch1_reg",
+                                flow_cta="Daftar & Amankan Slot",
+                                header_text="OnlineBoost Batch 1",
+                                body_text=f"Siap Kak {resolved_name}! Klik tombol di bawah untuk melengkapi data pendaftaran dan mengamankan slot kelas Anda:",
+                                flow_action="navigate",
+                                flow_action_payload={"screen": "REGISTRATION"},
+                                tenant_id=tenant_id,
+                                phone_number_id=phone_number_id,
+                            )
+                            if flow_res and flow_res.get("messages"):
+                                flow_dispatched = True
+                        except Exception as flow_err:
+                            logger.warning(f"[AcademyState0] WhatsApp flow send failed for register intent, fallback to text: {flow_err}")
+
                     reg_reply = (
                         f"Siap Kak {resolved_name}! Mantap banget keputusannya. 🚀\n\n"
                         f"Untuk pencatatan slot Kelas Inkubasi CTWA Batch 1 (Rp249.000), silakan balas pesan ini dengan format:\n"
@@ -2660,23 +2702,24 @@ class AcademyBotStateMachine:
                         campaign="onlineboost_batch1",
                         tenant_id=tenant_id,
                     )
-                    try:
-                        await send_whatsapp_text(
-                            to_phone=clean_phone,
-                            text=reg_reply,
-                            tenant_id=tenant_id,
-                            phone_number_id=phone_number_id,
-                        )
-                    except Exception as e:
-                        logger.warning(f"[AcademyState0] WhatsApp send note: {e}")
+                    if not flow_dispatched:
+                        try:
+                            await send_whatsapp_text(
+                                to_phone=clean_phone,
+                                text=reg_reply,
+                                tenant_id=tenant_id,
+                                phone_number_id=phone_number_id,
+                            )
+                        except Exception as e:
+                            logger.warning(f"[AcademyState0] WhatsApp send note: {e}")
 
                     return {
                         "handled": True,
                         "state": 1,
                         "next_state": 1,
-                        "action": "ASK_REGISTRATION_DETAILS",
+                        "action": "DISPATCH_REGISTRATION_FLOW" if flow_dispatched else "ASK_REGISTRATION_DETAILS",
                         "campaign": "onlineboost_batch1",
-                        "reply": reg_reply,
+                        "reply": "WHATSAPP_FLOW_DISPATCHED" if flow_dispatched else reg_reply,
                         "customer_name": resolved_name,
                         "tenant_id": tenant_id,
                     }

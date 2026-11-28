@@ -10,6 +10,7 @@ Provides:
 import os
 import base64
 import logging
+import threading
 import urllib.parse
 from datetime import datetime, timezone, timedelta
 from typing import Optional, Dict, Any
@@ -18,8 +19,6 @@ import httpx
 from app.core.security.test_isolation_guard import safe_load_dotenv
 
 from app.services.reconciliation_service import PAYMENT_INTENTS
-
-safe_load_dotenv()
 
 logger = logging.getLogger("XENDIT_SERVICE")
 
@@ -57,6 +56,7 @@ class XenditService:
     """Client wrapper for Xendit QR Codes & Payment APIs."""
 
     def __init__(self):
+        safe_load_dotenv()
         self.provider = os.getenv("PAYMENT_GATEWAY_PROVIDER", "midtrans").strip().lower()
 
         secret_key = os.getenv("XENDIT_SECRET_KEY")
@@ -421,5 +421,79 @@ class XenditService:
         self._processed_transactions.clear()
 
 
-# Global Singleton
-xendit_service = XenditService()
+_xendit_service_instance: Optional[XenditService] = None
+_xendit_service_lock = threading.Lock()
+
+
+def get_xendit_service() -> XenditService:
+    """Lazy accessor for XenditService singleton instance with double-checked locking.
+
+    Defers instantiation until first access so importing the module never crashes
+    even when environment variables are absent, and ensures thread-safe singleton
+    creation across concurrent threads.
+    """
+    global _xendit_service_instance
+    if _xendit_service_instance is None:
+        with _xendit_service_lock:
+            if _xendit_service_instance is None:
+                _xendit_service_instance = XenditService()
+    return _xendit_service_instance
+
+
+def reset_xendit_service() -> None:
+    """Reset the cached singleton instance in a thread-safe manner (used in tests)."""
+    global _xendit_service_instance
+    with _xendit_service_lock:
+        _xendit_service_instance = None
+
+
+class _LazyXenditServiceProxy:
+    """Transparent lazy proxy delegating all attribute and method access to XenditService.
+
+    Preserves full backwards compatibility for all `xendit_service.xxx` callers
+    while ensuring import-time safety without required environment variables.
+    """
+
+    @property
+    def __class__(self) -> type:
+        return XenditService
+
+    @__class__.setter
+    def __class__(self, val: type) -> None:
+        pass
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(get_xendit_service(), name)
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        setattr(get_xendit_service(), name, value)
+
+    def __delattr__(self, name: str) -> None:
+        try:
+            delattr(get_xendit_service(), name)
+        except AttributeError:
+            pass
+
+    def __copy__(self) -> XenditService:
+        import copy
+        return copy.copy(get_xendit_service())
+
+    def __repr__(self) -> str:
+        target = _xendit_service_instance
+        return f"<LazyXenditServiceProxy target={target!r}>"
+
+    def __dir__(self) -> list[str]:
+        # Combines class attributes of XenditService and proxy without triggering lazy instantiation.
+        # If the instance is already initialized, includes its dynamic instance attributes.
+        attrs = set(dir(XenditService))
+        attrs.update(super().__dir__())
+        if _xendit_service_instance is not None:
+            attrs.update(_xendit_service_instance.__dict__.keys())
+        return sorted(attrs)
+
+    def __bool__(self) -> bool:
+        return True
+
+
+# Global Lazy Proxy Singleton
+xendit_service: Any = _LazyXenditServiceProxy()

@@ -64,6 +64,7 @@ CANONICAL_BATCH1_SKU: str = "OB-BATCH1-249K"
 OFFICIAL_FLOW_ID: str = "1663739061907747"
 OFFICIAL_FLOW_TOKEN: str = "onlineboost_batch1_reg"
 OFFICIAL_FLOW_CTA: str = "Daftar & Amankan Slot"
+ONLINEBOOST_CANONICAL_TENANT_ID: str = "e12acd29-6c18-487b-ade7-5422878c1c36"
 STOREFRONT_URL: str = "https://shop.boontrack.com/onlineboost/p/kelas-inkubasi-ctwa-batch-1-scale"
 
 # Master Static QRIS fallback (Official BoonTrack / OnlineBoost QRIS)
@@ -502,6 +503,7 @@ class CTWAStateEngine:
             try:
                 sb.table("orders").insert({
                     "id": order_id,
+                    "tenant_id": ONLINEBOOST_CANONICAL_TENANT_ID,
                     "tenant_slug": "onlineboost",
                     "product_id": SINGLE_OFFER_SLUG,
                     "product_title": SINGLE_OFFER_NAME,
@@ -526,17 +528,19 @@ class CTWAStateEngine:
                 cur.execute(
                     """
                     INSERT INTO orders (
-                        id, tenant_slug, product_id, product_title, gross_amount,
+                        id, tenant_id, tenant_slug, product_id, product_title, gross_amount,
                         customer_name, customer_phone, customer_email, status, metadata,
                         created_at, updated_at
-                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 'PENDING', %s, %s, %s)
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, 'PENDING', %s, %s, %s)
                     ON CONFLICT (id) DO UPDATE SET
+                        tenant_id = EXCLUDED.tenant_id,
                         gross_amount = EXCLUDED.gross_amount,
                         metadata = EXCLUDED.metadata,
                         updated_at = NOW();
                     """,
                     (
                         order_id,
+                        ONLINEBOOST_CANONICAL_TENANT_ID,
                         "onlineboost",
                         SINGLE_OFFER_SLUG,
                         SINGLE_OFFER_NAME,

@@ -11,9 +11,72 @@ Covers:
 
 from datetime import datetime, timezone
 from enum import Enum
+from decimal import Decimal, InvalidOperation
+import math
 from typing import Optional, Dict, Any, Union
 from uuid import UUID, uuid4
 from pydantic import BaseModel, Field, ConfigDict
+
+
+class MonetaryValidationError(ValueError):
+    """Raised when monetary nominal fails financial validation or precision checks."""
+    pass
+
+
+MAX_FINANCIAL_AMOUNT = Decimal("999999999999")  # IDR 999 Billion limit
+
+
+def validate_monetary_amount(
+    val: Any,
+    field_name: str = "amount",
+    allow_fractional: bool = False,
+) -> Decimal:
+    """
+    Validates and converts a nominal to Decimal with strict financial invariants (UNIT-P0-01A):
+    - Rejects None, boolean, empty string.
+    - Rejects NaN, sNaN, Infinity, -Infinity.
+    - Rejects zero or negative amounts (must be strictly > 0).
+    - Rejects overflow (> MAX_FINANCIAL_AMOUNT).
+    - Rejects fractional decimal values if allow_fractional is False (e.g. IDR currencies).
+    - Never uses float() for calculations or comparisons; converts directly to Decimal.
+    """
+    if val is None or isinstance(val, bool):
+        raise MonetaryValidationError(f"Field '{field_name}' cannot be None or boolean.")
+
+    if isinstance(val, float):
+        if math.isnan(val) or math.isinf(val):
+            raise MonetaryValidationError(f"Field '{field_name}' cannot be NaN or Infinite (got float: {val}).")
+        if not allow_fractional and (val % 1 != 0):
+            raise MonetaryValidationError(f"Field '{field_name}' contains invalid fractional decimal value: {val}")
+        val_str = str(int(val) if val.is_integer() else val)
+    elif isinstance(val, (int, Decimal)):
+        val_str = str(val)
+    elif isinstance(val, str):
+        val_str = val.strip()
+        if not val_str:
+            raise MonetaryValidationError(f"Field '{field_name}' cannot be empty string.")
+    else:
+        raise MonetaryValidationError(f"Field '{field_name}' has unsupported monetary type: {type(val).__name__}")
+
+    try:
+        dec = Decimal(val_str)
+    except (InvalidOperation, ValueError):
+        raise MonetaryValidationError(f"Field '{field_name}' is not a valid decimal literal: '{val_str}'")
+
+    if dec.is_nan() or dec.is_infinite():
+        raise MonetaryValidationError(f"Field '{field_name}' cannot be NaN or Infinite.")
+
+    if dec <= Decimal("0"):
+        raise MonetaryValidationError(f"Field '{field_name}' must be a positive non-zero value, got: {dec}")
+
+    if dec > MAX_FINANCIAL_AMOUNT:
+        raise MonetaryValidationError(f"Field '{field_name}' exceeds maximum financial limit: {dec} > {MAX_FINANCIAL_AMOUNT}")
+
+    if not allow_fractional:
+        if dec != dec.to_integral_value():
+            raise MonetaryValidationError(f"Field '{field_name}' contains invalid fractional decimal value: {dec}")
+
+    return dec
 
 
 class PaymentStatus(str, Enum):
@@ -38,7 +101,7 @@ class PaymentIntentCreate(BaseModel):
 
     tenant_id: str = Field(..., description="Tenant identifier (e.g. 'atmosfitnes', 'boontrack-career')")
     order_id: str = Field(..., description="Unique client/business order reference ID")
-    amount: int = Field(..., gt=0, description="Base transaction amount in IDR")
+    amount: Union[Decimal, float, int] = Field(..., gt=0, description="Base transaction amount in IDR")
     user_id: Optional[str] = Field(None, description="Customer phone / user identifier")
     customer_name: Optional[str] = Field(None, description="Customer name if known")
     customer_email: Optional[str] = Field(None, description="Customer email for payment gateway")
@@ -57,9 +120,9 @@ class PaymentIntentResponse(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid4()))
     tenant_id: str
     order_id: str
-    amount: int = Field(..., description="Base amount in IDR")
+    amount: Union[Decimal, float, int] = Field(..., description="Base amount in IDR")
     unique_code: int = Field(..., description="Injected 3-digit unique verification code (0 if gateway handles routing)")
-    total_amount: int = Field(..., description="Total amount payable (amount + unique_code)")
+    total_amount: Union[Decimal, float, int] = Field(..., description="Total amount payable (amount + unique_code)")
     qr_string: str = Field(..., description="EMVCo Dynamic QRIS string")
     qr_image_url: Optional[str] = Field(None, description="QuickChart or CDN QR link")
     status: PaymentStatus = Field(default=PaymentStatus.PENDING)
@@ -81,9 +144,9 @@ class InvoicePayload(BaseModel):
     invoice_id: str
     tenant_id: str
     order_id: str
-    base_amount: int
+    base_amount: Union[Decimal, float, int]
     unique_code: int
-    total_amount: int
+    total_amount: Union[Decimal, float, int]
     qr_string: str
     qr_image_url: Optional[str] = None
     status: PaymentStatus = PaymentStatus.PENDING
@@ -97,7 +160,7 @@ class WebhookEventPayload(BaseModel):
     provider: str = Field(default="QRIS_DYNAMIC", description="Provider identifier (e.g. 'DANA_READER', 'DUITKU', 'XENDIT')")
     event_type: str = Field(default="PAYMENT_SETTLED", description="Event type identifier")
     provider_ref: str = Field(..., description="Unique provider transaction reference ID / hash")
-    amount: int = Field(..., description="Settled nominal amount detected")
+    amount: Union[Decimal, float, int] = Field(..., description="Settled nominal amount detected")
     order_id: Optional[str] = Field(None, description="Associated order ID if provided in reference")
     tenant_id: Optional[str] = Field(None, description="Tenant hint if parsed from reference or channel")
     idempotency_key: Optional[str] = Field(None, description="Client/Provider idempotency key")
@@ -112,7 +175,7 @@ class SettlementRecord(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid4()))
     payment_intent_id: str
     provider_ref: str
-    settled_amount: int
+    settled_amount: Union[Decimal, float, int]
     raw_payload: Dict[str, Any] = Field(default_factory=dict)
     settled_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 

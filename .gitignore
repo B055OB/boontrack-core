@@ -42,6 +42,12 @@ Proposal_*.docx
 Proposal_*.pdf
 generate_proposal*.py
 data/r2_mock_storage/
+data/recovery/
 .demo_sessions.json
 scratch/
+*.tmp.*
+.wrangler/
+_worker.bundle
 
+
+.vercel
