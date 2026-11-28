@@ -6,9 +6,7 @@ storage, SaaS Xendit settlement, and entitlement activation are approved and wir
 """
 from __future__ import annotations
 
-import hmac
 import json
-import os
 from typing import Any
 
 from fastapi import APIRouter, Request
@@ -19,6 +17,7 @@ from app.services.saas_billing_auth import (
     SaaSBillingAuthorizationError,
     verify_internal_saas_billing_request,
 )
+from app.services.saas_billing_xendit import SaaSXenditProfileError, SaaSXenditProvider
 from app.services.saas_billing_catalog import (
     CatalogError,
     TaxPolicy,
@@ -184,11 +183,12 @@ async def read_saas_payment_intent(intent_id: str) -> JSONResponse:
 @saas_billing_router.post("/webhooks/xendit")
 async def receive_saas_xendit_webhook(request: Request) -> JSONResponse:
     """Authenticate against the dedicated SaaS callback token; settlement is not wired yet."""
-    expected = str(os.getenv("SAAS_XENDIT_SANDBOX_CALLBACK_TOKEN", "")).strip()
-    if not expected:
+    try:
+        provider = SaaSXenditProvider()
+    except SaaSXenditProfileError:
         return _error("BILLING_PROVIDER_PROFILE_UNAVAILABLE", 503, retryable=True)
     supplied = str(request.headers.get("x-callback-token", "")).strip()
-    if not supplied or not hmac.compare_digest(supplied, expected):
+    if not provider.verify_callback_token(supplied):
         return _error("BILLING_PROVIDER_CALLBACK_UNAUTHORIZED", 403)
     # Do not accept, persist, or fulfill an event until the SaaS settlement transaction
     # and provider event deduplication consumer are wired.
