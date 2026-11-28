@@ -74,6 +74,7 @@ def get_admin_supabase_client() -> Client:
 from app.routes.gym_access_routes import gym_router
 from app.routes.gym_admin_routes import router as gym_admin_router
 from app.routes.payment import payment_router
+from app.routes.saas_billing_routes import saas_billing_router
 from app.routes.webchat import router as webchat_router
 from app.routes.internal_routes import internal_router
 from app.routes.xendit import xendit_router
@@ -320,6 +321,7 @@ app.include_router(gym_router, prefix="/api/v1/gym")
 app.include_router(gym_admin_router)
 app.include_router(xendit_router)
 app.include_router(payment_router)
+app.include_router(saas_billing_router)
 app.include_router(webchat_router)
 app.include_router(internal_router)
 app.include_router(onboarding_router)
