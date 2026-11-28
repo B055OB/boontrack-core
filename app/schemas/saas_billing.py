@@ -51,13 +51,14 @@ class SaaSQuoteRequest:
     items: Tuple[SaaSQuoteLineRequest, ...]
     catalog_version: str | None = None
     request_reference: str | None = None
+    idempotency_key: str | None = None
 
     @classmethod
     def from_mapping(cls, payload: Mapping[str, Any]) -> "SaaSQuoteRequest":
         if not isinstance(payload, Mapping):
             raise ValueError("BILLING_INVALID_REQUEST")
 
-        allowed = {"product", "items", "catalog_version", "request_reference"}
+        allowed = {"product", "items", "catalog_version", "request_reference", "idempotency_key"}
         forbidden = {
             "amount", "subtotal", "tax", "tax_amount", "total", "currency",
             "provider", "payment_provider", "merchant_account", "credential",
@@ -107,11 +108,18 @@ class SaaSQuoteRequest:
             if not request_reference or len(request_reference) > 128:
                 raise ValueError("BILLING_REQUEST_REFERENCE_INVALID")
 
+        idempotency_key = payload.get("idempotency_key")
+        if idempotency_key is not None:
+            idempotency_key = str(idempotency_key).strip()
+            if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{7,127}", idempotency_key):
+                raise ValueError("BILLING_IDEMPOTENCY_KEY_INVALID")
+
         return cls(
             product=product,
             items=tuple(items),
             catalog_version=catalog_version,
             request_reference=request_reference,
+            idempotency_key=idempotency_key,
         )
 
 
