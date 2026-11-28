@@ -274,25 +274,33 @@ class SaaSBillingRepository:
                         result["legacy_period_end"] = sub[2]
 
                     cur.execute(
-                        """
-                        SELECT pe.feature_key
-                        FROM public.tenant_entitlements te
-                        JOIN public.plan_entitlements pe ON pe.plan_id = te.plan_id
-                        WHERE lower(te.tenant_slug) = %s
-                          AND te.status::text IN ('ACTIVE', 'TRIALING')
-                          AND (te.subscription_ends_at IS NULL OR te.subscription_ends_at > NOW())
-                          AND pe.is_enabled = TRUE
-                        ORDER BY pe.feature_key;
-                        """, (tenant_slug,),
+                        "SELECT to_regclass('public.tenant_entitlements'), to_regclass('public.plan_entitlements');"
                     )
-                    result["legacy_feature_keys"] = [str(row[0]) for row in cur.fetchall()]
+                    entitlement_tables = cur.fetchone()
+                    if entitlement_tables and entitlement_tables[0] and entitlement_tables[1]:
+                        cur.execute(
+                            """
+                            SELECT pe.feature_key
+                            FROM public.tenant_entitlements te
+                            JOIN public.plan_entitlements pe ON pe.plan_id = te.plan_id
+                            WHERE lower(te.tenant_slug) = %s
+                              AND te.status::text IN ('ACTIVE', 'TRIALING')
+                              AND (te.subscription_ends_at IS NULL OR te.subscription_ends_at > NOW())
+                              AND pe.is_enabled = TRUE
+                            ORDER BY pe.feature_key;
+                            """, (tenant_slug,),
+                        )
+                        result["legacy_feature_keys"] = [str(row[0]) for row in cur.fetchall()]
                     mapped = {
                         self._LEGACY_FEATURE_TO_ENTITLEMENT[key]
                         for key in result["legacy_feature_keys"]
                         if key in self._LEGACY_FEATURE_TO_ENTITLEMENT
                     }
                     if result["legacy_plan_id"] == "ENTERPRISE":
+                        # The legacy Tier 4 package itself is an active entitlement;
+                        # exact feature aliases below prevent add-on double-billing.
                         mapped.update({
+                            "ENTERPRISE",
                             "SHOP_DYNAMIC_QRIS",
                             "SHOP_SMARTCHATBOX_MULTI_CS",
                         })
