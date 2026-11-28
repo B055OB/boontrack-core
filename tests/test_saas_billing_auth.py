@@ -15,6 +15,7 @@ def _shop_request_and_quote():
         "product": "STUDIO",
         "items": [{"sku": "STUDIO_TOPUP_KETENGAN_50"}],
         "request_reference": "saas-test-purchase-001",
+        "idempotency_key": "saas-test-idem-0001",
     })
     quote = quote_catalog_items(
         product=request.product,
@@ -58,7 +59,7 @@ class TestSaaSBillingAuth(unittest.TestCase):
             headers=self.headers,
             http_method="POST",
             canonical_path="/api/v1/saas-billing/payment-intents",
-            raw_body=b'{"product":"STUDIO"}',
+            raw_body=b'{"product":"STUDIO","idempotency_key":"saas-test-idem-0001"}',
             quote_request=self.request,
             quote=self.quote,
             db_connection_factory=lambda: None,
@@ -86,7 +87,7 @@ class TestSaaSBillingAuth(unittest.TestCase):
                 headers=self.headers,
                 http_method="POST",
                 canonical_path="/api/v1/saas-billing/payment-intents",
-                raw_body=b'{}',
+                raw_body=b'{"product":"STUDIO","idempotency_key":"saas-test-idem-0001"}',
                 quote_request=self.request,
                 quote=self.quote,
                 db_connection_factory=lambda: None,
