@@ -103,6 +103,14 @@ CATALOG: tuple[CatalogEntry, ...] = (
         approval_state=CatalogApprovalState.APPROVED, cadence=BillingCadence.MONTHLY,
         amount_idr=99000, entitlement_key="SHOP_STARTER_GROWTH_BUNDLE", sellable=True,
     ),
+    # Existing Tier 4 / Team Scale. Keep the legacy ENTERPRISE entitlement mapping;
+    # this catalog alias does not rewrite existing subscription rows or customer history.
+    CatalogEntry(
+        product=SaaSProduct.SHOP, sku="TEAM_SCALE",
+        display_name="Team Scale (Tier 4)", item_kind=BillingItemKind.SUBSCRIPTION,
+        approval_state=CatalogApprovalState.APPROVED, cadence=BillingCadence.MONTHLY,
+        amount_idr=499000, entitlement_key="ENTERPRISE", sellable=True,
+    ),
     CatalogEntry(
         product=SaaSProduct.SHOP, sku="SHOP_ADS_PERFORMANCE",
         display_name="Ads Performance", item_kind=BillingItemKind.SUBSCRIPTION,
